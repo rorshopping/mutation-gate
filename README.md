@@ -8,6 +8,16 @@ that (a test that merely calls a function and asserts "not None" covers all its 
 **Mutation score can**: it measures whether a test suite *fails on a deliberately broken
 program*. If it doesn't, the tests are theater.
 
+## Install
+
+```
+pip install mutation-gate        # from PyPI (once published) — or:
+pip install -e ".[dev]"          # from this repo
+```
+
+Requires Python ≥ 3.11. For the JS/TS target you also need Node and, in the project,
+`npm install -D @babel/parser @babel/traverse @babel/generator @babel/types`.
+
 ## Commands
 
 ```
@@ -76,15 +86,16 @@ never mutated. Requires Node + Babel packages in the project:
 ```
 npm install -D @babel/parser @babel/traverse @babel/generator @babel/types
 cd examples/demo-js
-mutation-gate run . --min-score 0.8        # real tests: 93.8%
-mutation-gate verify test/math.theater.test.js   # theater test: 22.9%
+mutation-gate run . --min-score 0.8        # real tests: 94.0%
+mutation-gate verify test/math.theater.test.js   # theater test: 22.0%
 ```
 
-Same 10 core operators as Python (comparison, binop, boolop, bool_literal, num_literal,
-str_literal, remove_not, negate_condition, return_none, remove_stmt). Coverage-guided and
-test-subset modes work too, using Node's built-in test coverage (LCOV reporter) instead of
-`coverage.py` — e.g. `mutation-gate run . --test-subset` runs only the covering test files per
-mutant, and `verify` filters to the lines the evaluated test actually executes.
+Same 11 core operators as Python (comparison, binop, boolop, aug_assign, bool_literal,
+num_literal, str_literal, remove_not, negate_condition, return_none, remove_stmt).
+Coverage-guided and test-subset modes work too, using Node's built-in test coverage (LCOV
+reporter) instead of `coverage.py` — e.g. `mutation-gate run . --test-subset` runs only the
+covering test files per mutant, and `verify` filters to the lines the evaluated test actually
+executes.
 
 ## CI
 

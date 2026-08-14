@@ -45,9 +45,9 @@ ones — by measuring whether a test suite actually proves behavior, and gating 
   HEAD (including untracked) is verified; any contribution below the gate fails the run. This
   is the PR-CI wedge against theater tests.
 - **JS/TS target**: bundled Babel engine (`js/engine.mjs`) mutates `.js/.jsx/.ts/.tsx`
-  (10 operators), runs via `npm test` (auto-detected with `package.json`); test files never
-  mutated; `verify` with line-level filtering; coverage-guided `run` and per-mutant test
-  subsetting via Node's built-in test coverage (LCOV reporter).
+  (11 operators incl. `aug_assign`), runs via `npm test` (auto-detected with `package.json`);
+  test files never mutated; `verify` with line-level filtering; coverage-guided `run` and
+  per-mutant test subsetting via Node's built-in test coverage (LCOV reporter).
 - Config precedence: CLI > `.mutation-gate.toml` > `[tool.mutation-gate]` > defaults, with
   `--operators`, `--files`, `--workers`, `--timeout`, `--no-cache` overrides.
 
@@ -58,7 +58,7 @@ full pipeline + theater detection.
 
 ### Demo / CI
 - `examples/demo` — Python: real tests 91.5%; theater test ~28% and gated out.
-- `examples/demo-js` — JS/TS: real tests 93.8%; theater test 22.9%.
+- `examples/demo-js` — JS/TS: real tests 94.0%; theater test 22.0%.
 - `examples/ci/mutation-gate.yml` — GitHub Action: install, gate at 80%, upload JUnit,
   optional PR comment via `github-token`.
 

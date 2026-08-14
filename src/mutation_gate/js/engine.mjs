@@ -60,6 +60,15 @@ const BINOP_FLIPS = {
   "&": "|",
   "^": "|",
 };
+const AUG_FLIPS = {
+  "+=": "-=",
+  "-=": "+=",
+  "*=": "/=",
+  "/=": "*=",
+  "%=": "/=",
+  "&=": "|=",
+  "|=": "&=",
+};
 
 const REMOVABLE_STMT = new Set([
   "VariableDeclaration",
@@ -125,6 +134,15 @@ traverse(ast, {
     add("boolop", path.node, (n) => {
       n.operator = n.operator === "&&" ? "||" : "&&";
     });
+  },
+  AssignmentExpression(path) {
+    const op = path.node.operator;
+    if (AUG_FLIPS[op]) {
+      add("aug_assign", path.node, (n) => {
+        n.operator = AUG_FLIPS[op];
+        return n;
+      });
+    }
   },
   BooleanLiteral(path) {
     add("bool_literal", path.node, (n) => {

@@ -153,11 +153,19 @@ def test_generate_js_mutants_produces_comparison():
     ops = {m.operator for m in mutants}
     assert "comparison" in ops
     assert "return_none" in ops
+    assert "aug_assign" in ops  # countAbove uses `count += 1`
     for m in mutants:
         assert m.file == rel
         assert m.source != m.original
     names = [m.operator for m in mutants if m.lineno == 2]
     assert any(m.before == "value < lo" for m in mutants)
+
+
+@needs_js
+def test_generate_js_aug_assign_flips():
+    mutants = js_mod.generate_js_mutants(DEMO_JS, Path("src/math.js"), operators=["aug_assign"])
+    assert mutants
+    assert any("+=" in m.before and "-=" in m.after for m in mutants)
 
 
 @needs_js
