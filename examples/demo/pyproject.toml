@@ -1,0 +1,6 @@
+[tool.mutation-gate]
+test_command = "pytest"
+timeout = 60
+workers = 4
+include_globs = ["src/**/*.py"]
+exclude_globs = ["**/test_*.py", "**/*_test.py", "**/tests/**"]

@@ -1,0 +1,65 @@
+<testsuite name="mutation-gate" tests="47" failures="4" skipped="0" errors="0" properties="score=0.9148936170212766 killed=43 survived=4 cached=0">
+  <testcase classname="src.demo.core.py" name="negate_condition:8" time="0.509" />
+  <testcase classname="src.demo.core.py" name="remove_stmt:8" time="0.517" />
+  <testcase classname="src.demo.core.py" name="comparison:8" time="0.470">
+    <failure type="survived">value &lt; lo
+→
+value &lt;= lo</failure>
+  </testcase>
+  <testcase classname="src.demo.core.py" name="return_none:9" time="0.505" />
+  <testcase classname="src.demo.core.py" name="negate_condition:10" time="0.505" />
+  <testcase classname="src.demo.core.py" name="remove_stmt:10" time="0.516" />
+  <testcase classname="src.demo.core.py" name="comparison:10" time="0.468">
+    <failure type="survived">value &gt; hi
+→
+value &gt;= hi</failure>
+  </testcase>
+  <testcase classname="src.demo.core.py" name="return_none:11" time="0.496" />
+  <testcase classname="src.demo.core.py" name="return_none:12" time="0.499" />
+  <testcase classname="src.demo.core.py" name="remove_stmt:12" time="0.502" />
+  <testcase classname="src.demo.core.py" name="negate_condition:17" time="0.493" />
+  <testcase classname="src.demo.core.py" name="remove_stmt:17" time="0.492" />
+  <testcase classname="src.demo.core.py" name="remove_not:17" time="0.509" />
+  <testcase classname="src.demo.core.py" name="return_none:18" time="0.484" />
+  <testcase classname="src.demo.core.py" name="num_literal:18" time="0.491" />
+  <testcase classname="src.demo.core.py" name="return_none:19" time="0.496" />
+  <testcase classname="src.demo.core.py" name="remove_stmt:19" time="0.504" />
+  <testcase classname="src.demo.core.py" name="return_none:24" time="0.505" />
+  <testcase classname="src.demo.core.py" name="remove_stmt:24" time="0.498" />
+  <testcase classname="src.demo.core.py" name="comparison:24" time="0.494" />
+  <testcase classname="src.demo.core.py" name="binop:24" time="0.517" />
+  <testcase classname="src.demo.core.py" name="num_literal:24" time="0.513" />
+  <testcase classname="src.demo.core.py" name="num_literal:24" time="0.519" />
+  <testcase classname="src.demo.core.py" name="remove_stmt:29" time="0.524" />
+  <testcase classname="src.demo.core.py" name="num_literal:29" time="0.497" />
+  <testcase classname="src.demo.core.py" name="remove_stmt:30" time="0.503" />
+  <testcase classname="src.demo.core.py" name="negate_condition:31" time="0.499" />
+  <testcase classname="src.demo.core.py" name="comparison:31" time="0.501" />
+  <testcase classname="src.demo.core.py" name="aug_assign:32" time="0.509" />
+  <testcase classname="src.demo.core.py" name="num_literal:32" time="0.507" />
+  <testcase classname="src.demo.core.py" name="return_none:33" time="0.505" />
+  <testcase classname="src.demo.core.py" name="remove_stmt:33" time="0.512" />
+  <testcase classname="src.demo.core.py" name="negate_condition:38" time="0.511" />
+  <testcase classname="src.demo.core.py" name="remove_stmt:38" time="0.512" />
+  <testcase classname="src.demo.core.py" name="comparison:38" time="0.515" />
+  <testcase classname="src.demo.core.py" name="num_literal:38" time="0.512" />
+  <testcase classname="src.demo.core.py" name="return_none:39" time="0.532" />
+  <testcase classname="src.demo.core.py" name="str_literal:39" time="0.518" />
+  <testcase classname="src.demo.core.py" name="negate_condition:40" time="0.522" />
+  <testcase classname="src.demo.core.py" name="remove_stmt:40" time="0.531" />
+  <testcase classname="src.demo.core.py" name="comparison:40" time="0.459">
+    <failure type="survived">n &lt; 0
+→
+n &lt;= 0</failure>
+  </testcase>
+  <testcase classname="src.demo.core.py" name="num_literal:40" time="0.466">
+    <failure type="survived">0
+→
+1</failure>
+  </testcase>
+  <testcase classname="src.demo.core.py" name="return_none:41" time="0.497" />
+  <testcase classname="src.demo.core.py" name="str_literal:41" time="0.489" />
+  <testcase classname="src.demo.core.py" name="return_none:42" time="0.475" />
+  <testcase classname="src.demo.core.py" name="remove_stmt:42" time="0.479" />
+  <testcase classname="src.demo.core.py" name="str_literal:42" time="0.469" />
+</testsuite>

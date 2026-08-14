@@ -1,0 +1,36 @@
+name: Mutation Gate
+description: Gate CI on mutation score — catches theater tests (esp. AI-written ones).
+inputs:
+  min-score:
+    description: Minimum acceptable mutation score (0..1).
+    required: false
+    default: "0.8"
+  project:
+    description: Project root relative to the workspace.
+    required: false
+    default: "."
+  args:
+    description: Extra arguments passed to `mutation-gate run`.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Install mutation-gate
+      shell: bash
+      run: pip install mutation-gate pytest coverage
+    - name: Run mutation gate
+      shell: bash
+      working-directory: ${{ inputs.project }}
+      run: |
+        mutation-gate run . --min-score ${{ inputs.min-score }} \
+          --junit mutation-results.xml ${{ inputs.args }}
+    - name: Upload JUnit report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: mutation-results
+        path: ${{ inputs.project }}/mutation-results.xml
