@@ -9,7 +9,7 @@ import { createRequire } from "module";
 import { readFileSync } from "fs";
 
 const [, , projectRoot, file] = process.argv;
-const req = createRequire(projectRoot + "/");
+const req = createRequire(projectRoot + "/package.json");
 
 let parse, traverse, generate, t;
 try {

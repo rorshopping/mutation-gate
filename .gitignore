@@ -11,3 +11,4 @@ build/
 *.egg
 .mutation-gate/
 mutegate-*/
+node_modules/
