@@ -44,4 +44,5 @@ jobs:
           npm install --no-fund --no-audit
           npm test
           python -m mutation_gate.cli run . --min-score 0.8 --no-cache
+          python -m mutation_gate.cli run . --min-score 0.8 --no-cache --coverage-guided
           python -m mutation_gate.cli verify test/math.real.test.js .

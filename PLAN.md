@@ -43,13 +43,15 @@ ones — by measuring whether a test suite actually proves behavior, and gating 
 - **Delta mode** (`--diff`): git-aware — only mutate lines changed vs `HEAD`.
 - **JS/TS target**: bundled Babel engine (`js/engine.mjs`) mutates `.js/.jsx/.ts/.tsx`
   (10 operators), runs via `npm test` (auto-detected with `package.json`); test files never
-  mutated; `verify` supported (no coverage filtering yet).
+  mutated; `verify` with line-level filtering; coverage-guided `run` and per-mutant test
+  subsetting via Node's built-in test coverage (LCOV reporter).
 - Config precedence: CLI > `.mutation-gate.toml` > `[tool.mutation-gate]` > defaults, with
   `--operators`, `--files`, `--workers`, `--timeout`, `--no-cache` overrides.
 
 ### Tests
-79 tests: operators, generation, config, scoring/gate, cache, diff parsing, JUnit/JSON/HTML
-reports, PR-comment rendering, JS engine + JS verify, full pipeline + theater detection.
+87 tests: operators, generation, config, scoring/gate, cache, diff parsing, JUnit/JSON/HTML
+reports, PR-comment rendering, JS engine + JS coverage/subset + JS verify, full pipeline +
+theater detection.
 
 ### Demo / CI
 - `examples/demo` — Python: real tests 91.5%; theater test ~28% and gated out.
@@ -59,6 +61,6 @@ reports, PR-comment rendering, JS engine + JS verify, full pipeline + theater de
 
 ## Roadmap
 - v0.4: hosted distributed runner (the monetization); GitHub App; `verify` gate wiring
-  into PR checks; JS coverage-guided/test-subset parity.
+  into PR checks; more operators (boundary/number-range, function-call removal).
 - Known limits: Python `ast.unparse` reformats files (comments/encoding dropped) — acceptable
   trade-off for one-mutant-per-file correctness.

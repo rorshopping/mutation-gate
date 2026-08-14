@@ -24,8 +24,8 @@ mutation-gate run --diff                   # gate only lines changed vs HEAD (PR
 | Flag | Applies to | Effect |
 | --- | --- | --- |
 | `--min-score 0.8` | run | exit 1 unless score ≥ 80% |
-| `--coverage-guided` | run | only mutate lines the suite actually executes (needs `coverage`) |
-| `--test-subset` | run | run only the tests that touch each mutated file (needs `coverage`) |
+| `--coverage-guided` | run | only mutate lines the suite actually executes (Python: `coverage`; JS: Node's test coverage) |
+| `--test-subset` | run | run only the tests that touch each mutated file (Python: `coverage`; JS: Node's test coverage) |
 | `--diff` | run | only mutate lines changed vs `HEAD` in git |
 | `--files a.py b.py` | run/mutate | only mutate the given files |
 | `--operators comparison,binop` | run/mutate/verify | restrict the operator set |
@@ -81,7 +81,9 @@ mutation-gate verify test/math.theater.test.js   # theater test: 22.9%
 
 Same 10 core operators as Python (comparison, binop, boolop, bool_literal, num_literal,
 str_literal, remove_not, negate_condition, return_none, remove_stmt). Coverage-guided and
-test-subset modes are Python-only for now.
+test-subset modes work too, using Node's built-in test coverage (LCOV reporter) instead of
+`coverage.py` — e.g. `mutation-gate run . --test-subset` runs only the covering test files per
+mutant, and `verify` filters to the lines the evaluated test actually executes.
 
 ## CI
 

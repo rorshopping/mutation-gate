@@ -137,10 +137,12 @@ def _run_task(
     test_cmd: list[str],
     timeout: int,
     subset_files: list[str] | None = None,
+    subset_prefix: list[str] | None = None,
 ) -> tuple[int, MutantResult]:
     work = _ensure_worktree(Path(project_root), Path(pool_dir))
     if subset_files:
-        test_cmd = [sys.executable, "-m", "pytest", *subset_files, "-q"]
+        prefix = subset_prefix if subset_prefix is not None else [sys.executable, "-m", "pytest", "-q"]
+        test_cmd = [*prefix, *subset_files]
     result = _run_one(work, mutant, test_cmd, timeout)
     return idx, result
 
@@ -171,6 +173,19 @@ class Runner:
         if parts[0] in ("python", "python3"):
             return parts
         return _resolve_cmd(parts)
+
+    def _subset_prefix(self, test_cmd: list[str]) -> list[str]:
+        """Command prefix for running a reduced set of test files per mutant.
+
+        Python/pytest → `python -m pytest -q <files>`; anything else (JS/TS
+        via node or npm) → `node --test <files>`.
+        """
+        if len(test_cmd) >= 2 and test_cmd[0] in (sys.executable, "python", "python3") and test_cmd[1] == "-m":
+            return [test_cmd[0], "-m", "pytest", "-q"]
+        node = shutil.which("node")
+        if node:
+            return [node, "--test"]
+        return test_cmd
 
     def baseline(self) -> tuple[bool, str]:
         """Run suite unmuted; True if baseline passes (exit 0)."""
@@ -224,6 +239,7 @@ class Runner:
                 pool_dir = base_dir / "pool"
                 pool_dir.mkdir()
                 test_cmd = self._test_cmd()
+                subset_prefix = self._subset_prefix(test_cmd) if subsets is not None else None
                 timeout = self.timeout
                 done = len(mutants) - len(pending)
 
@@ -238,6 +254,7 @@ class Runner:
                             test_cmd,
                             timeout,
                             subsets.get(i) if subsets else None,
+                            subset_prefix,
                         )
                         for i in pending
                     ]

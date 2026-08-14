@@ -70,6 +70,81 @@ def test_collect_js_files_files_filter(tmp_path):
     assert [f.name for f in files] == ["core.js"]
 
 
+def test_collect_js_test_files():
+    tests = js_mod.collect_js_test_files(DEMO_JS)
+    names = {t.name for t in tests}
+    assert "math.real.test.js" in names
+    assert "math.theater.test.js" in names
+    assert "math.js" not in names
+
+
+def test_lcov_parse_backslash_paths(tmp_path):
+    lcov = "SF:src\\math.js\nDA:1,1\nDA:2,0\nDA:3,5\nLF:3\nLH:2\n"
+    out = js_mod._lcov_lines(lcov, tmp_path)
+    assert out == {Path("src/math.js"): {1, 3}}
+
+
+def test_lcov_parse_absolute_outside_project(tmp_path):
+    lcov = f"SF:{tmp_path.parent}\\other.js\nDA:1,1\n"
+    out = js_mod._lcov_lines(lcov, tmp_path)
+    assert out == {}
+
+
+@needs_js
+def test_js_covered_lines_for_test():
+    cov = js_mod.js_covered_lines_for_test(DEMO_JS, Path("test/math.real.test.js"))
+    assert cov
+    assert Path("src/math.js") in cov
+    assert cov[Path("src/math.js")]
+
+
+@needs_js
+def test_js_covered_lines_for_suite():
+    cov = js_mod.js_covered_lines_for_suite(DEMO_JS)
+    assert cov.get(Path("src/math.js"))
+
+
+@needs_js
+def test_collect_js_per_file_coverage():
+    test_files = js_mod.collect_js_test_files(DEMO_JS)
+    mapping = js_mod.collect_js_per_file_coverage(DEMO_JS, test_files, workers=2)
+    assert Path("src/math.js") in mapping
+    names = {t.name for t in mapping[Path("src/math.js")]}
+    assert {"math.real.test.js", "math.theater.test.js"} <= names
+
+
+@needs_js
+def test_verify_js_uses_coverage():
+    cfg = load_config(DEMO_JS)
+    cfg.operators = ["comparison"]
+    cfg.workers = 2
+    vr = js_mod.verify_js_project(DEMO_JS, Path("test/math.real.test.js"), cfg)
+    assert vr.coverage_available is True
+    assert vr.reachable > 0
+
+
+@needs_js
+def test_js_run_test_subset_cli(tmp_path):
+    import re
+    import subprocess
+
+    def score(args):
+        proc = subprocess.run(
+            [sys.executable, "-m", "mutation_gate.cli", "run", ".", "--no-cache", *args],
+            cwd=str(DEMO_JS),
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        m = re.search(r"Mutation score:\s+([\d.]+)%", proc.stdout)
+        assert m, proc.stdout + proc.stderr
+        return float(m.group(1))
+
+    full = score([])
+    subset = score(["--test-subset"])
+    assert subset == full
+
+
 @needs_js
 def test_generate_js_mutants_produces_comparison():
     rel = Path("src/math.js")

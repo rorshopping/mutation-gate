@@ -144,10 +144,14 @@ def _load_mutants_js(root: Path, cfg, args) -> list:
                 print("No modified files to mutate — nothing to gate.", file=sys.stderr)
                 return []
 
+    covered: dict[Path, set[int]] | None = None
     if getattr(args, "coverage_guided", False) or cfg.coverage_guided:
-        print("⚠️  coverage-guided is Python-only — ignoring for JS target.", file=sys.stderr)
-    if getattr(args, "test_subset", False) or cfg.test_subset:
-        print("⚠️  test subsetting is Python-only — ignoring for JS target.", file=sys.stderr)
+        if not js_mod.node_available():
+            print("⚠️  Node not available — coverage-guided mode disabled.", file=sys.stderr)
+        else:
+            covered = js_mod.js_covered_lines_for_suite(root, timeout=max(cfg.timeout, 300))
+            if not covered:
+                print("⚠️  Coverage run returned no data — running without line filtering.", file=sys.stderr)
 
     mutants = []
     for f in files:
@@ -156,6 +160,10 @@ def _load_mutants_js(root: Path, cfg, args) -> list:
             for m in js_mod.generate_js_mutants(root, rel, operators=ops):
                 if changed_lines is not None:
                     lines = changed_lines.get(rel, set())
+                    if m.lineno not in lines:
+                        continue
+                if covered is not None:
+                    lines = covered.get(m.file, set())
                     if m.lineno not in lines:
                         continue
                 mutants.append(m)
@@ -184,6 +192,18 @@ def _apply_operator_filter(args, cfg) -> None:
         cfg.operators = sorted(requested & known)
 
 
+def _build_subsets(source_to_tests: dict, mutants: list) -> tuple[dict[int, list[str]], int]:
+    """Map each mutant index → sorted list of test files that cover its source line."""
+    subsets: dict[int, list[str]] = {}
+    reduced = 0
+    for i, m in enumerate(mutants):
+        covering = sorted(source_to_tests.get(m.file, set()))
+        if covering:
+            subsets[i] = [tf.as_posix() for tf in covering]
+            reduced += 1
+    return subsets, reduced
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     cfg = load_config(root, args.config)
@@ -200,26 +220,37 @@ def cmd_run(args: argparse.Namespace) -> int:
     mutants = _load_mutants(root, cfg, args, language)
 
     subsets: dict[int, list[str]] | None = None
-    if language == "python" and (getattr(args, "test_subset", False) or cfg.test_subset):
-        if not coverage_available():
-            print("⚠️  coverage.py not installed — --test-subset disabled. Install with `pip install coverage`.", file=sys.stderr)
-        else:
-            test_files = collect_test_files(root, cfg)
-            if not test_files:
-                print("⚠️  No test files found — running full suite per mutant.", file=sys.stderr)
+    if getattr(args, "test_subset", False) or cfg.test_subset:
+        if language == "python":
+            if not coverage_available():
+                print("⚠️  coverage.py not installed — --test-subset disabled. Install with `pip install coverage`.", file=sys.stderr)
             else:
-                print(f"Building per-file test attribution across {len(test_files)} test files…", file=sys.stderr)
-                source_to_tests = collect_per_file_coverage(
-                    root, test_files, timeout=max(cfg.timeout, 300), workers=cfg.workers
-                )
-                subsets = {}
-                reduced = 0
-                for i, m in enumerate(mutants):
-                    covering = sorted(source_to_tests.get(m.file, set()))
-                    if covering:
-                        subsets[i] = [tf.as_posix() for tf in covering]
-                        reduced += 1
-                print(f"Test subsetting: {reduced}/{len(mutants)} mutants will run a reduced test set.", file=sys.stderr)
+                test_files = collect_test_files(root, cfg)
+                if not test_files:
+                    print("⚠️  No test files found — running full suite per mutant.", file=sys.stderr)
+                else:
+                    print(f"Building per-file test attribution across {len(test_files)} test files…", file=sys.stderr)
+                    source_to_tests = collect_per_file_coverage(
+                        root, test_files, timeout=max(cfg.timeout, 300), workers=cfg.workers
+                    )
+                    subsets, reduced = _build_subsets(source_to_tests, mutants)
+                    print(f"Test subsetting: {reduced}/{len(mutants)} mutants will run a reduced test set.", file=sys.stderr)
+        else:
+            from . import js as js_mod
+
+            if not js_mod.node_available():
+                print("⚠️  Node not available — --test-subset disabled.", file=sys.stderr)
+            else:
+                test_files = js_mod.collect_js_test_files(root)
+                if not test_files:
+                    print("⚠️  No test files found — running full suite per mutant.", file=sys.stderr)
+                else:
+                    print(f"Building per-file test attribution across {len(test_files)} test files…", file=sys.stderr)
+                    source_to_tests = js_mod.collect_js_per_file_coverage(
+                        root, test_files, timeout=max(cfg.timeout, 300), workers=cfg.workers
+                    )
+                    subsets, reduced = _build_subsets(source_to_tests, mutants)
+                    print(f"Test subsetting: {reduced}/{len(mutants)} mutants will run a reduced test set.", file=sys.stderr)
 
     cache_file = root / cfg.cache_file if cfg.cache else None
     runner = Runner(root, test_command=cfg.test_command, timeout=cfg.timeout, workers=cfg.workers, cache_file=cache_file)

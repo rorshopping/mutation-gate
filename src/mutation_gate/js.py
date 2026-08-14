@@ -88,6 +88,124 @@ def collect_js_files(root: Path, files: list[str] | None = None) -> list[Path]:
     return sorted(_iter_js_files(root))
 
 
+def collect_js_test_files(root: Path) -> list[Path]:
+    """JS/TS test files (relative to root)."""
+    return sorted(
+        p for p in root.rglob("*") if p.is_file() and _is_js_source(p) and not _is_noise(p) and _is_test_file(p)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Coverage via Node's built-in test runner (LCOV reporter)
+# ---------------------------------------------------------------------------
+
+
+def _lcov_lines(lcov_text: str, project_root: Path) -> dict[Path, set[int]]:
+    """Parse `node --test --test-reporter=lcov` output into file → executed lines.
+
+    Paths are relative to project_root; files outside the project are dropped.
+    """
+    project_root = project_root.resolve()
+    result: dict[Path, set[int]] = {}
+    current: Path | None = None
+    for line in lcov_text.splitlines():
+        if line.startswith("SF:"):
+            raw = line[3:].replace("\\", "/")
+            p = Path(raw)
+            if not p.is_absolute():
+                p = project_root / p
+            try:
+                current = p.resolve().relative_to(project_root)
+            except ValueError:
+                current = None
+        elif line.startswith("DA:") and current is not None:
+            try:
+                lineno_s, count_s = line[3:].split(",", 1)
+                if int(count_s) > 0:
+                    result.setdefault(current, set()).add(int(lineno_s))
+            except ValueError:
+                continue
+    return result
+
+
+def js_covered_lines_for_test(
+    project_root: Path,
+    test_file: Path,
+    timeout: int = 300,
+) -> dict[Path, set[int]]:
+    """Run `node --test --experimental-test-coverage` for one test file.
+
+    Returns file → executed line numbers, paths relative to project_root.
+    Empty dict on any failure.
+    """
+    if not node_available():
+        return {}
+    if not test_file.is_absolute():
+        test_file = project_root / test_file
+    cmd = [
+        "node",
+        "--test",
+        "--experimental-test-coverage",
+        "--test-reporter=lcov",
+        str(test_file.relative_to(project_root)),
+    ]
+    try:
+        proc = subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return {}
+    return _lcov_lines(proc.stdout, project_root)
+
+
+def js_covered_lines_for_suite(project_root: Path, timeout: int = 300) -> dict[Path, set[int]]:
+    """Run all test files under coverage; return file → executed lines."""
+    if not node_available():
+        return {}
+    test_files = collect_js_test_files(project_root)
+    if not test_files:
+        return {}
+    rels = [t.relative_to(project_root).as_posix() for t in test_files]
+    cmd = ["node", "--test", "--experimental-test-coverage", "--test-reporter=lcov", *rels]
+    try:
+        proc = subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return {}
+    return _lcov_lines(proc.stdout, project_root)
+
+
+def _js_coverage_task(root_str: str, test_path_str: str, timeout: int) -> tuple[str, dict]:
+    cov = js_covered_lines_for_test(Path(root_str), Path(test_path_str), timeout=timeout)
+    return test_path_str, cov
+
+
+def collect_js_per_file_coverage(
+    project_root: Path,
+    test_files: list[Path],
+    timeout: int = 300,
+    workers: int = 4,
+) -> dict[Path, set[Path]]:
+    """Map each source file → set of test files that execute lines in it."""
+    if not node_available() or not test_files:
+        return {}
+    from concurrent.futures import ProcessPoolExecutor
+
+    project_root = project_root.resolve()
+
+    results: dict[str, dict] = {}
+    with ProcessPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = [pool.submit(_js_coverage_task, str(project_root), str(tf), timeout) for tf in test_files]
+        for f in futures:
+            test_path, cov = f.result()
+            results[test_path] = cov
+
+    source_to_tests: dict[Path, set[Path]] = {}
+    for test_path, cov in results.items():
+        test_rel = Path(test_path).relative_to(project_root)
+        for src_rel, lines in cov.items():
+            if lines:
+                source_to_tests.setdefault(src_rel, set()).add(test_rel)
+    return source_to_tests
+
+
 def generate_js_mutants(
     project_root: Path,
     file_rel: Path,
@@ -144,12 +262,20 @@ def verify_js_project(
         test_file = root / test_file
     test_rel = test_file.relative_to(root).as_posix()
 
+    covered = js_covered_lines_for_test(root, test_file, timeout=max(cfg.timeout, 300))
+    cov_available = bool(covered)
+
     mutants: list[Mutant] = []
     ops = cfg.operators
     for f in collect_js_files(root):
         rel = f.relative_to(root)
+        if cov_available and rel not in covered:
+            continue
         try:
-            mutants.extend(generate_js_mutants(root, rel, operators=ops))
+            for m in generate_js_mutants(root, rel, operators=ops):
+                if cov_available and m.lineno not in covered.get(m.file, set()):
+                    continue
+                mutants.append(m)
         except RuntimeError:
             continue
 
@@ -180,5 +306,5 @@ def verify_js_project(
         survived=survived,
         invalid=0,
         survivors=survivors,
-        coverage_available=False,
+        coverage_available=cov_available,
     )
