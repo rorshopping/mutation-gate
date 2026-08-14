@@ -331,7 +331,13 @@ def cmd_run(args: argparse.Namespace) -> int:
             if done == total:
                 print(file=sys.stderr)
 
-    results, cached = runner.run(valid, progress=_progress, subsets=subsets)
+    remote = getattr(args, "remote", None)
+    if remote:
+        results, cached = runner.run_distributed(
+            remote, args.token or "", valid, progress=_progress, subsets=subsets
+        )
+    else:
+        results, cached = runner.run(valid, progress=_progress, subsets=subsets)
     for m in invalid:
         results.append(MutantResult(mutant=m, status="invalid"))
 
@@ -469,6 +475,40 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_server(args: argparse.Namespace) -> int:
+    from .server import make_server
+
+    try:
+        server = make_server(args.port, secret=args.token)
+    except OSError as exc:
+        print(f"server: failed to bind 127.0.0.1:{args.port}: {exc}", file=sys.stderr)
+        return 1
+    host, port = server.server_address
+    print(f"mutation-gate broker listening on http://127.0.0.1:{port}", file=sys.stderr)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nserver: shutting down", file=sys.stderr)
+    finally:
+        server.server_close()
+    return 0
+
+
+def cmd_worker(args: argparse.Namespace) -> int:
+    from .distributed import run_worker_loop
+
+    try:
+        run_worker_loop(
+            args.server,
+            args.token,
+            Path(args.dir),
+            poll_interval=args.poll,
+        )
+    except KeyboardInterrupt:
+        print("\nworker: shutting down", file=sys.stderr)
+    return 0
+
+
 def _add_common_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("root", nargs="?", default=".", help="project root (default: cwd)")
     p.add_argument("--config", default=None, help="path to .mutation-gate.toml")
@@ -503,6 +543,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--junit", default=None, help="write JUnit XML to this path (CI)")
     r.add_argument("--html", default=None, help="write a self-contained HTML report to this path")
     r.add_argument("--ignore-baseline", action="store_true", help="mutate even if tests currently fail")
+    r.add_argument("--remote", default=None, help="distributed broker URL (http://host:port); workers execute mutants")
+    r.add_argument("--token", default=None, help="secret for the distributed broker (--remote)")
     r.add_argument("-v", "--verbose", action="store_true")
     r.set_defaults(func=cmd_run)
 
@@ -520,6 +562,18 @@ def build_parser() -> argparse.ArgumentParser:
     i = sub.add_parser("init", help="Write a starter .mutation-gate.toml")
     i.add_argument("root", nargs="?", default=".")
     i.set_defaults(func=cmd_init)
+
+    s = sub.add_parser("server", help="Run a distributed job broker (dev reference)")
+    s.add_argument("--port", type=int, default=8732, help="listen port (default 8732)")
+    s.add_argument("--token", default="", help="require this token from clients/workers")
+    s.set_defaults(func=cmd_server)
+
+    w = sub.add_parser("worker", help="Run a distributed worker against a local checkout")
+    w.add_argument("--server", default="http://127.0.0.1:8732", help="broker URL (default http://127.0.0.1:8732)")
+    w.add_argument("--token", default="", help="broker secret")
+    w.add_argument("--dir", default=".", help="local checkout of the project (must match the client's)")
+    w.add_argument("--poll", type=float, default=0.5, help="idle poll interval in seconds")
+    w.set_defaults(func=cmd_worker)
 
     return p
 

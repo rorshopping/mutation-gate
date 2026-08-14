@@ -56,6 +56,36 @@ def _resolve_cmd(parts: list[str]) -> list[str]:
     return parts
 
 
+def resolve_test_cmd(command: str) -> list[str]:
+    """Turn a test command string into an executable argv (worker-safe).
+
+    `pytest` → `[python, -m, pytest, ...]`; `python`/`python3` pass through;
+    anything else (npm, node, ...) is resolved via PATH (cmd.exe shim on Windows).
+    """
+    parts = shlex.split(command)
+    if not parts:
+        return [sys.executable, "-m", "pytest"]
+    if parts[0] == "pytest":
+        return [sys.executable, "-m", "pytest", *parts[1:]]
+    if parts[0] in ("python", "python3"):
+        return parts
+    return _resolve_cmd(parts)
+
+
+def subset_prefix(test_cmd: list[str]) -> list[str]:
+    """Command prefix for running a reduced set of test files per mutant.
+
+    Python/pytest → `python -m pytest -q <files>`; anything else (JS/TS via
+    node or npm) → `node --test <files>`.
+    """
+    if len(test_cmd) >= 2 and test_cmd[0] in (sys.executable, "python", "python3") and test_cmd[1] == "-m":
+        return [test_cmd[0], "-m", "pytest", "-q"]
+    node = shutil.which("node")
+    if node:
+        return [node, "--test"]
+    return test_cmd
+
+
 def _copy_worktree(src: Path, dst: Path) -> None:
     dst_tmp = Path(str(dst) + ".tmp")
     shutil.rmtree(dst_tmp, ignore_errors=True)
@@ -165,27 +195,10 @@ class Runner:
         self.cache_file = cache_file
 
     def _test_cmd(self) -> list[str]:
-        parts = shlex.split(self.test_command)
-        if not parts:
-            return [sys.executable, "-m", "pytest"]
-        if parts[0] == "pytest":
-            return [sys.executable, "-m", "pytest", *parts[1:]]
-        if parts[0] in ("python", "python3"):
-            return parts
-        return _resolve_cmd(parts)
+        return resolve_test_cmd(self.test_command)
 
     def _subset_prefix(self, test_cmd: list[str]) -> list[str]:
-        """Command prefix for running a reduced set of test files per mutant.
-
-        Python/pytest → `python -m pytest -q <files>`; anything else (JS/TS
-        via node or npm) → `node --test <files>`.
-        """
-        if len(test_cmd) >= 2 and test_cmd[0] in (sys.executable, "python", "python3") and test_cmd[1] == "-m":
-            return [test_cmd[0], "-m", "pytest", "-q"]
-        node = shutil.which("node")
-        if node:
-            return [node, "--test"]
-        return test_cmd
+        return subset_prefix(test_cmd)
 
     def baseline(self) -> tuple[bool, str]:
         """Run suite unmuted; True if baseline passes (exit 0)."""
@@ -266,6 +279,104 @@ class Runner:
                             progress(done, len(mutants))
             finally:
                 shutil.rmtree(base_dir, ignore_errors=True)
+
+            if self.cache_file is not None and fp is not None:
+                for i in pending:
+                    r = results[i]
+                    key = cache_mod.mutant_key(
+                        r.mutant.source, r.mutant.file.as_posix(), r.mutant.operator
+                    )
+                    cache_results[key] = {
+                        "status": r.status,
+                        "exit_code": r.exit_code,
+                        "duration": r.duration,
+                    }
+                cache_mod.save_cache(self.cache_file, fp, cache_results)
+
+        return [r for r in results if r is not None], len(cached_entries)
+
+    def run_distributed(
+        self,
+        server_url: str,
+        token: str,
+        mutants: list[Mutant],
+        progress=None,
+        subsets: dict[int, list[str]] | None = None,
+    ) -> tuple[list[MutantResult], int]:
+        """Run the suite against each mutant via a distributed broker.
+
+        Mutants are serialized into a job on the broker; workers (see
+        distributed.run_worker_loop) pull tasks and execute them against
+        their own checkout. Cache replay works exactly as in `run`; caching
+        is disabled when per-mutant subsets are used.
+        """
+        from .distributed import poll_job, post_results, submit_job
+
+        if not mutants:
+            return [], 0
+
+        results: list[MutantResult] = [None] * len(mutants)  # type: ignore[list-item]
+        cached_entries: dict[int, dict] = {}
+
+        fp = None
+        cache_results: dict[str, dict] = {}
+        if self.cache_file is not None and subsets is None:
+            fp = cache_mod.fingerprint(self.project_root, self.test_command, self.timeout)
+            cache_results = cache_mod.load_results(self.cache_file, fp)
+
+        pending: list[int] = []
+        for i, m in enumerate(mutants):
+            key = cache_mod.mutant_key(m.source, m.file.as_posix(), m.operator)
+            hit = cache_results.get(key)
+            if hit and hit.get("status") in ("killed", "survived"):
+                results[i] = MutantResult(
+                    mutant=m,
+                    status=hit["status"],
+                    exit_code=hit.get("exit_code"),
+                    duration=hit.get("duration", 0.0),
+                )
+                cached_entries[i] = hit
+            else:
+                pending.append(i)
+
+        if pending:
+            tasks: dict[str, dict] = {}
+            for i in pending:
+                m = mutants[i]
+                tasks[str(i)] = {
+                    "source": m.source,
+                    "file": m.file.as_posix(),
+                    "lineno": m.lineno,
+                    "operator": m.operator,
+                    "before": m.before,
+                    "after": m.after,
+                    "subset_files": subsets.get(i) if subsets else None,
+                }
+
+            job_id = submit_job(server_url, token, tasks, self.test_command, self.timeout)
+            if progress:
+                progress(len(mutants) - len(pending), len(mutants))
+            remote = poll_job(
+                server_url, job_id, total_timeout=self.timeout * max(1, len(pending)) + 120
+            )
+
+            for idx_str, r in remote.items():
+                i = int(idx_str)
+                results[i] = MutantResult(
+                    mutant=mutants[i],
+                    status=r.get("status", "survived"),
+                    exit_code=r.get("exit_code"),
+                    duration=r.get("duration", 0.0),
+                    output=r.get("output", ""),
+                    timed_out=bool(r.get("timed_out")),
+                )
+
+            missing = [i for i in pending if results[i] is None]
+            if missing:
+                raise RuntimeError(
+                    f"{len(missing)} mutant(s) never completed remotely (job {job_id}); "
+                    "a worker may have died — check `mutation-gate worker` logs"
+                )
 
             if self.cache_file is not None and fp is not None:
                 for i in pending:

@@ -27,6 +27,9 @@ mutation-gate run --min-score 0.8          # CI gate: fail if score < 80%
 mutation-gate verify tests/test_x.py       # does THIS test file actually prove anything?
 mutation-gate mutate                       # list (or --out dump) mutants without running
 mutation-gate run --diff                   # gate only lines changed vs HEAD (PR delta)
+mutation-gate server --token SECRET        # run a distributed job broker
+mutation-gate worker --token SECRET        # run a worker against your checkout
+mutation-gate run --remote http://host:8732 --token SECRET   # execute mutants remotely
 ```
 
 ### Flags
@@ -48,6 +51,8 @@ mutation-gate run --diff                   # gate only lines changed vs HEAD (PR
 | `--workers N`, `--timeout N` | run/verify | tune parallelism / per-mutant timeout |
 | `--ignore-baseline` | run | mutate even if the suite currently fails |
 | `--gate 0.6` | verify | exit 1 unless this test's contribution ≥ 60% |
+| `--remote URL` | run | execute mutants via a distributed broker (`server` + `worker`) |
+| `--token SECRET` | run | shared secret for the distributed broker |
 
 ## Caching
 
@@ -97,6 +102,26 @@ reporter) instead of `coverage.py` — e.g. `mutation-gate run . --test-subset` 
 covering test files per mutant, and `verify` filters to the lines the evaluated test actually
 executes.
 
+## Distributed runner
+
+Mutation runs are embarrassingly parallel, so `run` can push the work to any number of
+machines. A tiny stdlib HTTP broker (`server`) hands each mutant to the first free `worker`,
+which executes it against its own checkout and reports back:
+
+```
+mutation-gate server --port 8732 --token SECRET        # machine A
+mutation-gate worker --server http://B:8732 --token SECRET --dir /path/to/repo   # machine B, C, ...
+mutation-gate run . --remote http://B:8732 --token SECRET
+```
+
+- The client serializes mutants into a job; workers pull tasks (`/v1/tasks/next`), run the
+  test command against their **local** copy of the repo, and post results. Cache replay,
+  `--min-score`, `--test-subset`, and report output all behave identically to a local run.
+- Zero dependencies — the broker and worker are pure stdlib (`http.server`, `urllib`). This
+  is the open-source core of the planned hosted add-on: point `--remote` at a cloud broker
+  and workers clone the repo at a pinned commit instead of a `--dir` checkout.
+- `server --port 0` picks an ephemeral port (handy for tests).
+
 ## CI
 
 Copy `examples/ci/mutation-gate.yml` into your repo's `.github/workflows/` (it uses the
@@ -119,11 +144,13 @@ below 50% fails the gate (the AI-test wedge: coverage alone can't catch it).
 ## Layout
 
 - `src/mutation_gate/` — engine (operators, generation, runner, cache, coverage, verify, gate)
+- `src/mutation_gate/server.py` — distributed broker (stdlib `http.server`)
+- `src/mutation_gate/distributed.py` — distributed client + worker
 - `src/mutation_gate/js/engine.mjs` — Babel-based JS/TS mutator (Node side)
 - `examples/demo/` — Python dogfood project with real tests vs theater tests
 - `examples/demo-js/` — JS/TS dogfood project (Node's built-in test runner)
 - `examples/ci/` — GitHub Action workflow template
-- `tests/` — the tool's own test suite (94 tests)
+- `tests/` — the tool's own test suite (101 tests)
 
 ## Roadmap
 
@@ -131,3 +158,6 @@ below 50% fails the gate (the AI-test wedge: coverage alone can't catch it).
 - v0.3 ✅ JS/TS target (Babel engine, npm test runner)
 - v0.4 ✅ JS coverage-guided `run` + test subsetting (Node LCOV); `--verify-changed-tests`
   PR gate; more operators
+- v0.5 ✅ distributed runner (`server` / `worker` / `run --remote`)
+- v0.6 — hosted distributed runner (the opencode-go model), GitHub App / PR checks,
+  JS/TS coverage parity on `verify`
