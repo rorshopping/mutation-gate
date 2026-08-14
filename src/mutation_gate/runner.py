@@ -56,29 +56,51 @@ def _resolve_cmd(parts: list[str]) -> list[str]:
     return parts
 
 
-def resolve_test_cmd(command: str) -> list[str]:
+def detect_project_python(project_root: Path) -> str | None:
+    """Return the project's own venv interpreter if one exists.
+
+    Checks `<root>/.venv` then `<root>/venv` for the platform interpreter.
+    Lets `mutation-gate run .` work out of the box on a project whose deps
+    live in its own virtualenv, even when mutation-gate itself is installed
+    in a different environment.
+    """
+    for env in (".venv", "venv"):
+        base = project_root / env
+        for candidate in ("Scripts/python.exe", "bin/python", "bin/python3"):
+            p = base / candidate
+            if p.is_file():
+                return str(p)
+    return None
+
+
+def resolve_test_cmd(command: str, project_python: str | None = None) -> list[str]:
     """Turn a test command string into an executable argv (worker-safe).
 
     `pytest` → `[python, -m, pytest, ...]`; `python`/`python3` pass through;
     anything else (npm, node, ...) is resolved via PATH (cmd.exe shim on Windows).
+    `project_python`, when given, is used as the interpreter so tests run in the
+    project's own venv (which has the project's dependencies).
     """
     parts = shlex.split(command)
     if not parts:
-        return [sys.executable, "-m", "pytest"]
+        return [project_python or sys.executable, "-m", "pytest"]
     if parts[0] == "pytest":
-        return [sys.executable, "-m", "pytest", *parts[1:]]
+        return [project_python or sys.executable, "-m", "pytest", *parts[1:]]
     if parts[0] in ("python", "python3"):
+        if project_python:
+            return [project_python, *parts[1:]]
         return parts
     return _resolve_cmd(parts)
 
 
-def subset_prefix(test_cmd: list[str]) -> list[str]:
+def subset_prefix(test_cmd: list[str], project_python: str | None = None) -> list[str]:
     """Command prefix for running a reduced set of test files per mutant.
 
     Python/pytest → `python -m pytest -q <files>`; anything else (JS/TS via
     node or npm) → `node --test <files>`.
     """
-    if len(test_cmd) >= 2 and test_cmd[0] in (sys.executable, "python", "python3") and test_cmd[1] == "-m":
+    interp = project_python or sys.executable
+    if len(test_cmd) >= 2 and test_cmd[0] in (interp, sys.executable, "python", "python3") and test_cmd[1] == "-m":
         return [test_cmd[0], "-m", "pytest", "-q"]
     node = shutil.which("node")
     if node:
@@ -195,12 +217,13 @@ class Runner:
         self.timeout = timeout
         self.workers = max(1, workers)
         self.cache_file = cache_file
+        self.project_python = detect_project_python(self.project_root)
 
     def _test_cmd(self) -> list[str]:
-        return resolve_test_cmd(self.test_command)
+        return resolve_test_cmd(self.test_command, self.project_python)
 
     def _subset_prefix(self, test_cmd: list[str]) -> list[str]:
-        return subset_prefix(test_cmd)
+        return subset_prefix(test_cmd, self.project_python)
 
     def baseline(self) -> tuple[bool, str]:
         """Run suite unmuted; True if baseline passes (exit 0)."""

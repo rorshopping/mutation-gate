@@ -11,12 +11,24 @@ program*. If it doesn't, the tests are theater.
 ## Install
 
 ```
-pip install mutation-gate        # from PyPI (once published) — or:
-pip install -e ".[dev]"          # from this repo
+pip install "mutation-gate @ git+https://github.com/rorshopping/mutation-gate.git"
 ```
 
-Requires Python ≥ 3.11. For the JS/TS target you also need Node and, in the project,
-`npm install -D @babel/parser @babel/traverse @babel/generator @babel/types`.
+Requires Python ≥ 3.11. No other install steps for Python projects.
+
+**Zero setup on projects with their own venv.** If your project has a `.venv` (or
+`venv`), mutation-gate detects it and runs the suite with *that* interpreter — so its
+dependencies (pytest, your packages) are found automatically. Install mutation-gate in
+any environment and run:
+
+```
+mutation-gate run . --min-score 0.8
+```
+
+Optional extras, both auto-detected:
+- `pip install coverage` **in your project's venv** to enable `--coverage-guided` and
+  `--test-subset` (otherwise they're skipped with a notice).
+- JS/TS support needs Node and, in the project: `npm install -D @babel/parser @babel/traverse @babel/generator @babel/types`.
 
 ## Commands
 

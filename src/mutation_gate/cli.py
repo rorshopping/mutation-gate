@@ -24,7 +24,7 @@ from .report import (
     report_to_dict,
     verify_to_dict,
 )
-from .runner import Runner, filter_invalid
+from .runner import Runner, detect_project_python, filter_invalid
 from .verify import verify_project
 
 
@@ -97,11 +97,12 @@ def _load_mutants(root: Path, cfg, args, language: str) -> list:
             files = keep
 
     covered: dict[Path, set[int]] | None = None
+    project_python = detect_project_python(root)
     if getattr(args, "coverage_guided", False) or cfg.coverage_guided:
-        if not coverage_available():
-            print("⚠️  coverage.py not installed — coverage-guided mode disabled. Install with `pip install coverage`.", file=sys.stderr)
+        if not coverage_available(project_python):
+            print("⚠️  coverage.py not installed for the test interpreter — coverage-guided mode disabled. Install with `pip install coverage`.", file=sys.stderr)
         else:
-            covered = covered_lines_for_suite(root, timeout=max(cfg.timeout, 300))
+            covered = covered_lines_for_suite(root, timeout=max(cfg.timeout, 300), project_python=project_python)
             if not covered:
                 print("⚠️  Coverage run returned no data — running without line filtering.", file=sys.stderr)
 
@@ -276,8 +277,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     subsets: dict[int, list[str]] | None = None
     if getattr(args, "test_subset", False) or cfg.test_subset:
         if language == "python":
-            if not coverage_available():
-                print("⚠️  coverage.py not installed — --test-subset disabled. Install with `pip install coverage`.", file=sys.stderr)
+            project_python = detect_project_python(root)
+            if not coverage_available(project_python):
+                print("⚠️  coverage.py not installed for the test interpreter — --test-subset disabled. Install with `pip install coverage`.", file=sys.stderr)
             else:
                 test_files = collect_test_files(root, cfg)
                 if not test_files:
@@ -285,7 +287,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 else:
                     print(f"Building per-file test attribution across {len(test_files)} test files…", file=sys.stderr)
                     source_to_tests = collect_per_file_coverage(
-                        root, test_files, timeout=max(cfg.timeout, 300), workers=cfg.workers
+                        root, test_files, timeout=max(cfg.timeout, 300), workers=cfg.workers, project_python=project_python
                     )
                     subsets, reduced = _build_subsets(source_to_tests, mutants)
                     print(f"Test subsetting: {reduced}/{len(mutants)} mutants will run a reduced test set.", file=sys.stderr)

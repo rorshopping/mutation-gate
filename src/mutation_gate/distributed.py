@@ -23,7 +23,7 @@ import urllib.request
 from pathlib import Path
 
 from .model import Mutant, MutantResult
-from .runner import _ensure_worktree, _run_one, resolve_test_cmd, subset_prefix
+from .runner import _ensure_worktree, _run_one, detect_project_python, resolve_test_cmd, subset_prefix
 
 
 # ---------------------------------------------------------------- http helpers
@@ -116,10 +116,11 @@ def _worker_task(project_dir: Path, pool_dir: Path, task: dict) -> dict:
         source=task["source"],
         original="",
     )
-    cmd = resolve_test_cmd(task.get("test_command", "pytest"))
+    project_python = detect_project_python(project_dir)
+    cmd = resolve_test_cmd(task.get("test_command", "pytest"), project_python)
     subset_files = task.get("subset_files")
     if subset_files:
-        cmd = [*subset_prefix(cmd), *subset_files]
+        cmd = [*subset_prefix(cmd, project_python), *subset_files]
     work = _ensure_worktree(project_dir, pool_dir)
     result = _run_one(work, mutant, cmd, int(task.get("timeout", 60)))
     return {

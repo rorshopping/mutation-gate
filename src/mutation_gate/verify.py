@@ -8,7 +8,7 @@ from .config import Config, collect_python_files, load_config
 from .coverage import covered_lines_for_test
 from .generate import generate_mutants
 from .model import Mutant, MutantResult, VerifyResult
-from .runner import Runner, filter_invalid
+from .runner import Runner, detect_project_python, filter_invalid
 
 
 def verify_project(root: Path, test_file: Path, cfg: Config | None = None) -> VerifyResult:
@@ -17,7 +17,9 @@ def verify_project(root: Path, test_file: Path, cfg: Config | None = None) -> Ve
     if not test_file.is_absolute():
         test_file = root / test_file
 
-    covered = covered_lines_for_test(root, test_file, timeout=max(cfg.timeout, 300))
+    covered = covered_lines_for_test(
+        root, test_file, timeout=max(cfg.timeout, 300), project_python=detect_project_python(root)
+    )
     ops = cfg.effective_operators()
 
     # Build mutants only for source files the test file touches.

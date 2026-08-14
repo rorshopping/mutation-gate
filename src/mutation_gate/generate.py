@@ -55,6 +55,8 @@ def generate_mutants(
 ) -> list[Mutant]:
     """Return one Mutant per (site, operator) producing a distinct file variant."""
     ops = operators or OPERATORS
+    if source.startswith("\ufeff"):
+        source = source[1:]  # tolerate a UTF-8 BOM (common on Windows-authored files)
     try:
         tree = ast.parse(source)
     except SyntaxError:

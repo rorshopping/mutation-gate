@@ -15,7 +15,30 @@ from pathlib import Path
 _COVERAGE_OK = importlib.util.find_spec("coverage") is not None
 
 
-def coverage_available() -> bool:
+def _python_for(project_root: Path, project_python: str | None) -> str:
+    if project_python:
+        return project_python
+    from .runner import detect_project_python
+
+    return detect_project_python(project_root) or sys.executable
+
+
+def coverage_available(project_python: str | None = None) -> bool:
+    """True if `coverage` is importable by the interpreter that runs the tests.
+
+    `project_python` (the project's own venv interpreter) is checked via a real
+    import so the answer matches what the coverage subprocess will actually do.
+    """
+    if project_python:
+        try:
+            rc = subprocess.run(
+                [project_python, "-c", "import coverage"],
+                capture_output=True,
+                timeout=15,
+            ).returncode
+            return rc == 0
+        except (OSError, subprocess.TimeoutExpired):
+            return False
     return _COVERAGE_OK
 
 
@@ -24,18 +47,20 @@ def covered_lines_for_test(
     test_file: Path,
     timeout: int = 300,
     source_dirs: list[str] | None = None,
+    project_python: str | None = None,
 ) -> dict[Path, set[int]]:
     """Run `coverage run -m pytest <test_file>` and return file → executed line numbers.
 
     Paths are relative to project_root.
     """
-    if not coverage_available():
+    py = _python_for(project_root, project_python)
+    if not coverage_available(py):
         return {}
     with tempfile.TemporaryDirectory(prefix="mutegate-cov-") as td:
         data_file = Path(td) / "cov.db"
         json_file = Path(td) / "cov.json"
         cmd = [
-            sys.executable,
+            py,
             "-m",
             "coverage",
             "run",
@@ -51,7 +76,7 @@ def covered_lines_for_test(
             subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
             subprocess.run(
                 [
-                    sys.executable,
+                    py,
                     "-m",
                     "coverage",
                     "json",
@@ -83,8 +108,18 @@ def covered_lines_for_test(
     return result
 
 
-def _coverage_task(project_root_str: str, test_path_str: str, timeout: int) -> tuple[str, dict]:
-    cov = covered_lines_for_test(Path(project_root_str), Path(test_path_str), timeout=timeout)
+def _coverage_task(
+    project_root_str: str,
+    test_path_str: str,
+    timeout: int,
+    project_python: str | None = None,
+) -> tuple[str, dict]:
+    cov = covered_lines_for_test(
+        Path(project_root_str),
+        Path(test_path_str),
+        timeout=timeout,
+        project_python=project_python,
+    )
     return test_path_str, cov
 
 
@@ -93,13 +128,14 @@ def collect_per_file_coverage(
     test_files: list[Path],
     timeout: int = 300,
     workers: int = 4,
+    project_python: str | None = None,
 ) -> dict[Path, set[Path]]:
     """Map each source file → set of test files that execute lines in it.
 
     Runs the coverage pipeline once per test file (in parallel across worker
     processes). Returns paths relative to project_root.
     """
-    if not coverage_available():
+    if not coverage_available(project_python):
         return {}
     if not test_files:
         return {}
@@ -110,7 +146,7 @@ def collect_per_file_coverage(
     results: dict[str, dict] = {}
     with ProcessPoolExecutor(max_workers=max(1, workers)) as pool:
         futures = [
-            pool.submit(_coverage_task, str(project_root), str(tf), timeout)
+            pool.submit(_coverage_task, str(project_root), str(tf), timeout, project_python)
             for tf in test_files
         ]
         for f in futures:
@@ -126,15 +162,16 @@ def collect_per_file_coverage(
     return source_to_tests
 
 
-def covered_lines_for_suite(project_root: Path, timeout: int = 300) -> dict[Path, set[int]]:
+def covered_lines_for_suite(project_root: Path, timeout: int = 300, project_python: str | None = None) -> dict[Path, set[int]]:
     """Run the full test suite under coverage; return file → executed lines."""
-    if not coverage_available():
+    py = _python_for(project_root, project_python)
+    if not coverage_available(py):
         return {}
     with tempfile.TemporaryDirectory(prefix="mutegate-cov-") as td:
         data_file = Path(td) / "cov.db"
         json_file = Path(td) / "cov.json"
         cmd = [
-            sys.executable,
+            py,
             "-m",
             "coverage",
             "run",
@@ -149,7 +186,7 @@ def covered_lines_for_suite(project_root: Path, timeout: int = 300) -> dict[Path
             subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
             subprocess.run(
                 [
-                    sys.executable,
+                    py,
                     "-m",
                     "coverage",
                     "json",

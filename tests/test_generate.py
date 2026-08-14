@@ -5,6 +5,12 @@ from pathlib import Path
 from mutation_gate.generate import generate_mutants
 
 
+def test_bom_prefixed_source_still_mutates():
+    src = "\ufeffdef f(a, b):\n    return a < b\n"
+    mutants = generate_mutants(src, Path("m.py"))
+    assert any(m.operator == "comparison" for m in mutants)
+
+
 def test_comparison_flip_generated():
     src = "def f(a, b):\n    return a < b\n"
     mutants = generate_mutants(src, Path("m.py"))
