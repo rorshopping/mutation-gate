@@ -253,7 +253,7 @@ for (const c of candidates) {
 
   const before = snippet(c.node);
   const afterNode = replacement && replacement !== found.node ? replacement : found.node;
-  const after = snippet(afterNode);
+  const after = replacement === null ? "(removed)" : snippet(afterNode);
 
   mutants.push({
     id: id++,

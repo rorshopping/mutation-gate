@@ -46,3 +46,16 @@ def test_collect_files(tmp_path):
     files = collect_python_files(tmp_path, cfg)
     assert any(f.name == "a.py" for f in files)
     assert not any(f.name.endswith("test_a.py") for f in files)
+
+
+def test_collect_excludes_files_under_dot_dirs(tmp_path):
+    (tmp_path / "src").mkdir(parents=True)
+    (tmp_path / "src" / "a.py").write_text("x = 1\n")
+    (tmp_path / ".venv" / "Lib" / "site-packages").mkdir(parents=True)
+    (tmp_path / ".venv" / "Lib" / "site-packages" / "dep.py").write_text("y = 1\n")
+    (tmp_path / "node_modules" / "pkg").mkdir(parents=True)
+    (tmp_path / "node_modules" / "pkg" / "index.py").write_text("z = 1\n")
+    cfg = load_config(tmp_path)
+    files = collect_python_files(tmp_path, cfg)
+    names = {f.name for f in files}
+    assert names == {"a.py"}

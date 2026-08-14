@@ -48,7 +48,7 @@ def covered_lines_for_test(
             "--no-header",
         ]
         try:
-            subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, timeout=timeout)
+            subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
             subprocess.run(
                 [
                     sys.executable,
@@ -62,6 +62,8 @@ def covered_lines_for_test(
                 cwd=str(project_root),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=60,
             )
             data = json.loads(json_file.read_text(encoding="utf-8"))
@@ -144,7 +146,7 @@ def covered_lines_for_suite(project_root: Path, timeout: int = 300) -> dict[Path
             "--no-header",
         ]
         try:
-            subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, timeout=timeout)
+            subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
             subprocess.run(
                 [
                     sys.executable,
@@ -158,6 +160,8 @@ def covered_lines_for_suite(project_root: Path, timeout: int = 300) -> dict[Path
                 cwd=str(project_root),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=60,
             )
             data = json.loads(json_file.read_text(encoding="utf-8"))

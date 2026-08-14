@@ -110,6 +110,8 @@ def _run_process(cmd: list[str], cwd: Path, timeout: int) -> tuple[int | None, f
             cwd=str(cwd),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             shell=False,
         )

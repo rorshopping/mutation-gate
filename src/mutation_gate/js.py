@@ -150,7 +150,7 @@ def js_covered_lines_for_test(
         str(test_file.relative_to(project_root)),
     ]
     try:
-        proc = subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return {}
     return _lcov_lines(proc.stdout, project_root)
@@ -166,7 +166,7 @@ def js_covered_lines_for_suite(project_root: Path, timeout: int = 300) -> dict[P
     rels = [t.relative_to(project_root).as_posix() for t in test_files]
     cmd = ["node", "--test", "--experimental-test-coverage", "--test-reporter=lcov", *rels]
     try:
-        proc = subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return {}
     return _lcov_lines(proc.stdout, project_root)
@@ -218,6 +218,8 @@ def generate_js_mutants(
         [node, str(ENGINE), str(project_root), str(file_abs)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=180,
         cwd=str(project_root),
     )

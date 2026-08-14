@@ -98,12 +98,13 @@ def collect_python_files(root: Path, cfg: Config) -> list[Path]:
     Uses pathlib.glob so `**` matches zero-or-more directories natively.
     """
     root = root.resolve()
-    excluded = {
-        p.resolve()
-        for pat in cfg.exclude_globs
-        for p in root.glob(pat)
-        if p.is_file()
-    }
+    excluded: set[Path] = set()
+    for pat in cfg.exclude_globs:
+        for p in root.glob(pat):
+            if p.is_file():
+                excluded.add(p.resolve())
+            elif p.is_dir():
+                excluded.update(q.resolve() for q in p.rglob("*") if q.is_file())
     included: set[Path] = set()
     for pat in cfg.include_globs:
         included |= {p.resolve() for p in root.glob(pat) if p.is_file()}
