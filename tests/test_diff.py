@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from mutation_gate.diff import git_changed_lines
+from mutation_gate.diff import git_changed_lines, git_changed_test_files
 
 
 def _git(root: Path, *args: str) -> None:
@@ -54,3 +54,37 @@ def test_non_python_files_ignored(repo: Path):
     changed = git_changed_lines(repo)
     assert Path("a.py") in changed
     assert Path("README.md") not in changed
+
+
+def test_js_files_now_tracked(repo: Path):
+    (repo / "src").mkdir()
+    (repo / "src" / "math.js").write_text("export const a = 1;\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "init")
+    (repo / "src" / "math.js").write_text("export const a = 2;\n", encoding="utf-8")
+    changed = git_changed_lines(repo)
+    assert Path("src/math.js") in changed
+
+
+def test_changed_test_files_includes_untracked(repo: Path):
+    (repo / "a.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "init")
+    (repo / "test_theater.py").write_text("def test_x():\n    assert 1\n", encoding="utf-8")
+    (repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+    files = git_changed_test_files(repo)
+    assert files is not None
+    assert "a.py" in files
+    assert "test_theater.py" in files
+
+
+def test_changed_test_files_nested_subdir(repo: Path):
+    (repo / "src").mkdir()
+    (repo / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "init")
+    (repo / "src" / "test_a.py").write_text("def test_x():\n    assert 1\n", encoding="utf-8")
+    files = git_changed_test_files(repo / "src")
+    assert files is not None
+    assert "test_a.py" in files
+    assert "src/test_a.py" not in files

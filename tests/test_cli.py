@@ -6,6 +6,16 @@ import sys
 import textwrap
 from pathlib import Path
 
+from mutation_gate.cli import _is_py_test_file
+
+
+def test_is_py_test_file():
+    assert _is_py_test_file(Path("tests/test_a.py"))
+    assert _is_py_test_file(Path("test_utils.py"))
+    assert _is_py_test_file(Path("core_test.py"))
+    assert not _is_py_test_file(Path("src/core.py"))
+    assert not _is_py_test_file(Path("utils.py"))
+
 
 def _make_project(tmp_path: Path) -> Path:
     root = tmp_path / "proj"
@@ -81,6 +91,74 @@ def test_theater_test_low_contribution(tmp_path):
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "Contribution" in proc.stdout
     assert "n/a" not in proc.stdout  # coverage should be available (pytest+coverage installed)
+
+
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+
+def _commit_baseline(root: Path) -> None:
+    _git(root, "init", "-q")
+    _git(root, "config", "user.email", "t@t")
+    _git(root, "config", "user.name", "t")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "baseline")
+
+
+def test_verify_changed_tests_catches_theater(tmp_path):
+    root = _make_project(tmp_path)
+    _commit_baseline(root)
+    (root / "tests" / "test_theater.py").write_text(
+        textwrap.dedent(
+            """\
+            import sys
+            sys.path.insert(0, "src")
+            from core import clamp
+
+            def test_clamp_runs():
+                result = clamp(3, 1, 5)
+                assert result is not None
+            """
+        )
+    )
+    proc = subprocess.run(
+        [sys.executable, "-m", "mutation_gate.cli", "run", str(root), "--verify-changed-tests", "0.5", "--no-cache"],
+        capture_output=True,
+        text=True,
+        cwd=root,
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "BELOW GATE" in proc.stdout
+    assert "Contribution" in proc.stdout
+
+
+def test_verify_changed_tests_zero_gate_passes(tmp_path):
+    root = _make_project(tmp_path)
+    _commit_baseline(root)
+    (root / "tests" / "test_theater.py").write_text(
+        "def test_x():\n    assert 1\n", encoding="utf-8"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-m", "mutation_gate.cli", "run", str(root), "--verify-changed-tests", "0", "--no-cache"],
+        capture_output=True,
+        text=True,
+        cwd=root,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "Verifying 1 changed test file" in proc.stdout
+
+
+def test_verify_changed_tests_no_changes(tmp_path):
+    root = _make_project(tmp_path)
+    _commit_baseline(root)
+    proc = subprocess.run(
+        [sys.executable, "-m", "mutation_gate.cli", "run", str(root), "--verify-changed-tests", "0.5", "--no-cache"],
+        capture_output=True,
+        text=True,
+        cwd=root,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "No changed test files to verify" in proc.stdout
 
 
 def test_cache_replay_shows_hits(tmp_path):

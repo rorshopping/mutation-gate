@@ -8,6 +8,8 @@ from pathlib import Path
 
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
+_SOURCE_EXTS = (".py", ".js", ".jsx", ".ts", ".tsx")
+
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
@@ -16,6 +18,35 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
         text=True,
         timeout=30,
     )
+
+
+def _repo_top(root: Path) -> Path | None:
+    """Absolute path of the git repo top level containing `root`, else None."""
+    proc = _git(root, "rev-parse", "--show-toplevel")
+    if proc.returncode != 0:
+        return None
+    return Path(proc.stdout.strip())
+
+
+def _rebase(root: Path, top: Path, name: str) -> Path | None:
+    """Rebase a git-reported path onto `root`; None if it lies outside.
+
+    `git diff` reports repo-root-relative paths while `git ls-files` reports
+    cwd-relative ones, so try both bases and prefer whichever exists.
+    """
+    root = root.resolve()
+    top = top.resolve()
+
+    def rel(base: Path) -> Path | None:
+        try:
+            return (base / name).resolve().relative_to(root)
+        except ValueError:
+            return None
+
+    for base in (root, top):
+        if (base / name).exists():
+            return rel(base)
+    return rel(root) or rel(top)
 
 
 def git_changed_lines(root: Path) -> dict[Path, set[int]] | None:
@@ -27,6 +58,9 @@ def git_changed_lines(root: Path) -> dict[Path, set[int]] | None:
     proc = _git(root, "rev-parse", "--is-inside-work-tree")
     if proc.returncode != 0:
         return None
+    top = _repo_top(root)
+    if top is None:
+        return None
 
     name_proc = _git(root, "diff", "HEAD", "--name-only", "-z")
     if name_proc.returncode != 0:
@@ -35,7 +69,8 @@ def git_changed_lines(root: Path) -> dict[Path, set[int]] | None:
 
     result: dict[Path, set[int]] = {}
     for name in names:
-        if not name.endswith(".py"):
+        rel = _rebase(root, top, name)
+        if rel is None or not rel.name.endswith(_SOURCE_EXTS):
             continue
         diff = _git(root, "diff", "HEAD", "--unified=0", "--", name)
         if diff.returncode != 0:
@@ -57,5 +92,35 @@ def git_changed_lines(root: Path) -> dict[Path, set[int]] | None:
             elif raw.startswith(" "):
                 cur += 1
         if lines:
-            result[Path(name)] = lines
+            result[rel] = lines
+    return result
+
+
+def git_changed_test_files(root: Path) -> list[str] | None:
+    """Paths (relative to root, posix) that are new or modified vs HEAD — including untracked.
+
+    Returns None if git is unavailable or the path isn't a repo.
+    """
+    root = root.resolve()
+    proc = _git(root, "rev-parse", "--is-inside-work-tree")
+    if proc.returncode != 0:
+        return None
+    top = _repo_top(root)
+    if top is None:
+        return None
+
+    tracked = _git(root, "diff", "HEAD", "--name-only", "-z")
+    if tracked.returncode != 0:
+        return None
+    files = [n for n in tracked.stdout.split("\0") if n]
+
+    untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
+    if untracked.returncode == 0:
+        files += [n for n in untracked.stdout.split("\0") if n]
+
+    result: list[str] = []
+    for name in files:
+        rel = _rebase(root, top, name)
+        if rel is not None:
+            result.append(rel.as_posix())
     return result

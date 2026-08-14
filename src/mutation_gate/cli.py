@@ -204,6 +204,60 @@ def _build_subsets(source_to_tests: dict, mutants: list) -> tuple[dict[int, list
     return subsets, reduced
 
 
+def _is_py_test_file(rel: Path) -> bool:
+    parts = rel.parts
+    if len(parts) > 1 and any(p in ("test", "tests") for p in parts[:-1]):
+        return True
+    stem = rel.stem
+    return stem.startswith("test_") or stem.endswith("_test")
+
+
+def _verify_changed_tests(root: Path, cfg, args, language: str, gate: float) -> bool:
+    """Verify every test file changed vs HEAD; False if any is below `gate`.
+
+    This is the AI-test wedge in PR CI: a PR that adds a theater test (high
+    reach, low kill) fails the run even if the mutation score passes.
+    """
+    from .diff import git_changed_test_files
+
+    changed = git_changed_test_files(root)
+    if changed is None:
+        print("⚠️  --verify-changed-tests requested but this is not a git repo.", file=sys.stderr)
+        return True
+
+    test_files: list[Path] = []
+    for name in changed:
+        rel = Path(name)
+        if language == "python":
+            if rel.suffix == ".py" and _is_py_test_file(rel) and (root / rel).exists():
+                test_files.append(rel)
+        else:
+            from . import js as js_mod
+
+            if rel.suffix in js_mod._JS_EXTS and js_mod._is_test_file(rel) and (root / rel).exists():
+                test_files.append(rel)
+
+    if not test_files:
+        print("No changed test files to verify — nothing to check.")
+        return True
+
+    print(f"\nVerifying {len(test_files)} changed test file(s) against a {gate * 100:.0f}% contribution gate…")
+    all_ok = True
+    for tf in sorted(test_files):
+        if language == "python":
+            vr = verify_project(root, tf, cfg)
+        else:
+            from . import js as js_mod
+
+            vr = js_mod.verify_js_project(root, tf, cfg)
+        contrib = vr.contribution if vr.contribution is not None else 0.0
+        ok = contrib >= gate
+        all_ok = all_ok and ok
+        verdict = "Strong" if contrib >= 0.7 else ("Decent" if contrib >= 0.5 else "Weak — likely a theater test")
+        print(f"  {tf.as_posix()}: Contribution {contrib * 100:.1f}%  [{verdict}]  {'PASS' if ok else 'BELOW GATE'}")
+    return all_ok
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     cfg = load_config(root, args.config)
@@ -293,14 +347,20 @@ def cmd_run(args: argparse.Namespace) -> int:
         Path(args.html).write_text(html_report(report, args.min_score), encoding="utf-8")
         print(f"HTML report written to {args.html}")
 
+    exit_code = 0
     if args.min_score is not None:
         ok = should_pass(report, args.min_score)
         print(f"\nGate (min {args.min_score * 100:.0f}%): {'PASS' if ok else 'FAIL'}")
-        _maybe_post_comment(args, report)
-        return 0 if ok else 1
+        if not ok:
+            exit_code = 1
+
+    changed_gate = getattr(args, "verify_changed_tests", None)
+    if changed_gate is not None:
+        if not _verify_changed_tests(root, cfg, args, language, changed_gate):
+            exit_code = 1
 
     _maybe_post_comment(args, report)
-    return 0
+    return exit_code
 
 
 def _maybe_post_comment(args: argparse.Namespace, report) -> None:
@@ -432,6 +492,14 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("run", help="Run full mutation score over the project")
     _add_common_run_flags(r)
     r.add_argument("--min-score", type=_score, default=None, help="gate: fail if score below this")
+    r.add_argument(
+        "--verify-changed-tests",
+        nargs="?",
+        const=0.5,
+        type=_score,
+        default=None,
+        help="verify test files changed vs HEAD; fail if any contribution is below this (default 0.5)",
+    )
     r.add_argument("--junit", default=None, help="write JUnit XML to this path (CI)")
     r.add_argument("--html", default=None, help="write a self-contained HTML report to this path")
     r.add_argument("--ignore-baseline", action="store_true", help="mutate even if tests currently fail")

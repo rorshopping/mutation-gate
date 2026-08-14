@@ -24,6 +24,7 @@ mutation-gate run --diff                   # gate only lines changed vs HEAD (PR
 | Flag | Applies to | Effect |
 | --- | --- | --- |
 | `--min-score 0.8` | run | exit 1 unless score ≥ 80% |
+| `--verify-changed-tests 0.5` | run | verify every test file changed vs HEAD (incl. untracked); exit 1 if any contribution < 50% |
 | `--coverage-guided` | run | only mutate lines the suite actually executes (Python: `coverage`; JS: Node's test coverage) |
 | `--test-subset` | run | run only the tests that touch each mutated file (Python: `coverage`; JS: Node's test coverage) |
 | `--diff` | run | only mutate lines changed vs `HEAD` in git |
@@ -100,7 +101,9 @@ gate at 80%, and uploads the JUnit report as an artifact). Or call the action di
 ```
 
 Give the workflow `permissions: pull-requests: write` and pass `github-token` to post the
-mutation report as a comment on every PR:
+mutation report as a comment on every PR. Add `--verify-changed-tests 0.5` to the same run to
+also flag **theater tests added by the PR** — any changed test file whose contribution falls
+below 50% fails the gate (the AI-test wedge: coverage alone can't catch it).
 
 ## Layout
 
@@ -109,10 +112,11 @@ mutation report as a comment on every PR:
 - `examples/demo/` — Python dogfood project with real tests vs theater tests
 - `examples/demo-js/` — JS/TS dogfood project (Node's built-in test runner)
 - `examples/ci/` — GitHub Action workflow template
-- `tests/` — the tool's own test suite (79 tests)
+- `tests/` — the tool's own test suite (94 tests)
 
 ## Roadmap
 
 - v0.2 ✅ shared worktree cache, on-disk result cache, coverage-guided `run`, delta mode
 - v0.3 ✅ JS/TS target (Babel engine, npm test runner)
-- v0.4: hosted distributed runner (monetization); GitHub App / Action parity; PR checks
+- v0.4 ✅ JS coverage-guided `run` + test subsetting (Node LCOV); `--verify-changed-tests`
+  PR gate; more operators

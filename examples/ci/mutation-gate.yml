@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Mutation gate (80% minimum)
+      - name: Mutation gate (80% minimum, + changed-test teeth check)
         uses: ./.github/actions/mutation-gate
         with:
           min-score: 0.8
           project: .
-          args: --coverage-guided
+          args: --coverage-guided --verify-changed-tests 0.5
           github-token: ${{ secrets.GITHUB_TOKEN }}
