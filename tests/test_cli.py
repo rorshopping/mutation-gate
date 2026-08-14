@@ -164,3 +164,15 @@ def test_json_output(tmp_path):
     assert "score" in data
     assert "mutants" in data
 
+
+def test_test_subset_matches_full_run(tmp_path):
+    root = _make_project(tmp_path)
+    base = [sys.executable, "-m", "mutation_gate.cli", "run", str(root), "--no-cache"]
+    full = subprocess.run(base, capture_output=True, text=True, cwd=root)
+    assert full.returncode == 0, full.stdout + full.stderr
+    subset = subprocess.run(base + ["--test-subset"], capture_output=True, text=True, cwd=root)
+    assert subset.returncode == 0, subset.stdout + subset.stderr
+    full_score = re.search(r"score: ([0-9.]+)%", full.stdout).group(1)
+    subset_score = re.search(r"score: ([0-9.]+)%", subset.stdout).group(1)
+    assert full_score == subset_score
+

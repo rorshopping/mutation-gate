@@ -35,6 +35,7 @@ class Config:
     cache: bool = True
     cache_file: str = ".mutation-gate/cache.json"
     coverage_guided: bool = False
+    test_subset: bool = False
     mutate_docstrings: bool = False
     operators: list[str] | None = None
 
@@ -111,3 +112,39 @@ def collect_python_files(root: Path, cfg: Config) -> list[Path]:
             continue
         files.append(p)
     return files
+
+
+def collect_test_files(root: Path, cfg: Config) -> list[Path]:
+    """Test files matching test globs (excluding noise dirs only).
+
+    Used by --test-subset to build per-source-file test attribution. The
+    user's mutation exclude_globs are NOT applied here — they default to
+    excluding tests, which would defeat the purpose.
+    """
+    root = root.resolve()
+    noise = {
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        ".pytest_cache",
+        "dist",
+        "build",
+    }
+    patterns = ["**/test_*.py", "**/*_test.py", "**/tests/**/*.py"]
+    found: set[Path] = set()
+    for pat in patterns:
+        for p in root.glob(pat):
+            if not p.is_file():
+                continue
+            try:
+                rel = p.relative_to(root)
+            except ValueError:
+                continue
+            if any(part in noise for part in rel.parts):
+                continue
+            found.add(p.resolve())
+    return sorted(found)

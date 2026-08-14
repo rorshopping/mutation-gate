@@ -3,6 +3,11 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
   test:
@@ -25,5 +30,11 @@ jobs:
         run: |
           cd examples/demo
           pytest -q
-          python -m mutation_gate.cli run . --min-score 0.7 --no-cache
+          python -m mutation_gate.cli run . --min-score 0.7 --no-cache \
+            --github-comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Dogfood — verify a strong test file
+        run: |
+          cd examples/demo
           python -m mutation_gate.cli verify tests/test_real.py .

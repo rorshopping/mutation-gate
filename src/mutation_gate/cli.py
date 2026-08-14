@@ -7,13 +7,15 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .config import collect_python_files, load_config
-from .coverage import coverage_available, covered_lines_for_suite
+from .config import collect_python_files, collect_test_files, load_config
+from .coverage import collect_per_file_coverage, coverage_available, covered_lines_for_suite
 from .diff import git_changed_lines
 from .gate import should_pass
 from .generate import generate_mutants
+from .github import detect_pr, post_comment, render_pr_comment
 from .model import MutantResult, Report
 from .report import (
+    html_report,
     junit_report,
     render_json,
     render_mutants,
@@ -131,6 +133,28 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     mutants, _covered = _load_mutants(root, cfg, args)
 
+    subsets: dict[int, list[str]] | None = None
+    if getattr(args, "test_subset", False) or cfg.test_subset:
+        if not coverage_available():
+            print("⚠️  coverage.py not installed — --test-subset disabled. Install with `pip install coverage`.", file=sys.stderr)
+        else:
+            test_files = collect_test_files(root, cfg)
+            if not test_files:
+                print("⚠️  No test files found — running full suite per mutant.", file=sys.stderr)
+            else:
+                print(f"Building per-file test attribution across {len(test_files)} test files…", file=sys.stderr)
+                source_to_tests = collect_per_file_coverage(
+                    root, test_files, timeout=max(cfg.timeout, 300), workers=cfg.workers
+                )
+                subsets = {}
+                reduced = 0
+                for i, m in enumerate(mutants):
+                    covering = sorted(source_to_tests.get(m.file, set()))
+                    if covering:
+                        subsets[i] = [tf.as_posix() for tf in covering]
+                        reduced += 1
+                print(f"Test subsetting: {reduced}/{len(mutants)} mutants will run a reduced test set.", file=sys.stderr)
+
     cache_file = root / cfg.cache_file if cfg.cache else None
     runner = Runner(root, test_command=cfg.test_command, timeout=cfg.timeout, workers=cfg.workers, cache_file=cache_file)
     baseline_ok, baseline_out = runner.baseline()
@@ -154,7 +178,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             if done == total:
                 print(file=sys.stderr)
 
-    results, cached = runner.run(valid, progress=_progress)
+    results, cached = runner.run(valid, progress=_progress, subsets=subsets)
     for m in invalid:
         results.append(MutantResult(mutant=m, status="invalid"))
 
@@ -166,12 +190,36 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.junit:
         Path(args.junit).write_text(junit_report(report), encoding="utf-8")
         print(f"JUnit XML written to {args.junit}")
+    if args.html:
+        Path(args.html).write_text(html_report(report, args.min_score), encoding="utf-8")
+        print(f"HTML report written to {args.html}")
 
     if args.min_score is not None:
         ok = should_pass(report, args.min_score)
         print(f"\nGate (min {args.min_score * 100:.0f}%): {'PASS' if ok else 'FAIL'}")
+        _maybe_post_comment(args, report)
         return 0 if ok else 1
+
+    _maybe_post_comment(args, report)
     return 0
+
+
+def _maybe_post_comment(args: argparse.Namespace, report) -> None:
+    """Post a PR comment when running in GitHub Actions and a token exists."""
+    if not getattr(args, "github_comment", False):
+        return
+    body = render_pr_comment(report, args.min_score)
+    import os
+
+    pr = detect_pr()
+    token = os.environ.get("GITHUB_TOKEN")
+    if not pr or not token:
+        print("\n--github-comment set, but not in a GitHub Actions PR context with GITHUB_TOKEN.\nMarkdown preview:\n")
+        print(body)
+        return
+    repo, number = pr
+    ok = post_comment(repo, number, token, body)
+    print(f"\nPR comment {'posted' if ok else 'FAILED'} to {repo}#{number}")
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
@@ -259,6 +307,8 @@ def _add_common_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--files", nargs="*", default=None, help="only mutate these files (paths relative to root)")
     p.add_argument("--diff", action="store_true", help="only mutate lines changed vs HEAD (git delta mode)")
     p.add_argument("--coverage-guided", action="store_true", help="only mutate lines covered by the test suite")
+    p.add_argument("--test-subset", action="store_true", help="run only covering tests per mutant (needs coverage)")
+    p.add_argument("--github-comment", action="store_true", help="post a markdown PR comment when in GitHub Actions")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -270,6 +320,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_run_flags(r)
     r.add_argument("--min-score", type=_score, default=None, help="gate: fail if score below this")
     r.add_argument("--junit", default=None, help="write JUnit XML to this path (CI)")
+    r.add_argument("--html", default=None, help="write a self-contained HTML report to this path")
     r.add_argument("--ignore-baseline", action="store_true", help="mutate even if tests currently fail")
     r.add_argument("-v", "--verbose", action="store_true")
     r.set_defaults(func=cmd_run)

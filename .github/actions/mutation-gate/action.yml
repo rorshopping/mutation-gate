@@ -13,6 +13,10 @@ inputs:
     description: Extra arguments passed to `mutation-gate run`.
     required: false
     default: ""
+  github-token:
+    description: GITHUB_TOKEN to post a PR comment with the mutation report.
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -25,9 +29,12 @@ runs:
     - name: Run mutation gate
       shell: bash
       working-directory: ${{ inputs.project }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         mutation-gate run . --min-score ${{ inputs.min-score }} \
-          --junit mutation-results.xml ${{ inputs.args }}
+          --junit mutation-results.xml ${{ inputs.args }} \
+          ${{ inputs.github-token != '' && '--github-comment' || '' }}
     - name: Upload JUnit report
       if: always()
       uses: actions/upload-artifact@v4

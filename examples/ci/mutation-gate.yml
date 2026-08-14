@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   mutation:
     runs-on: ubuntu-latest
@@ -15,3 +19,4 @@ jobs:
           min-score: 0.8
           project: .
           args: --coverage-guided
+          github-token: ${{ secrets.GITHUB_TOKEN }}

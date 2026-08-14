@@ -115,8 +115,11 @@ def _run_task(
     project_root: str,
     test_cmd: list[str],
     timeout: int,
+    subset_files: list[str] | None = None,
 ) -> tuple[int, MutantResult]:
     work = _ensure_worktree(Path(project_root), Path(pool_dir))
+    if subset_files:
+        test_cmd = [sys.executable, "-m", "pytest", *subset_files, "-q"]
     result = _run_one(work, mutant, test_cmd, timeout)
     return idx, result
 
@@ -156,8 +159,12 @@ class Runner:
             exit_code, _, output, _ = _run_process(self._test_cmd(), work, self.timeout)
         return exit_code == 0, output
 
-    def run(self, mutants: list[Mutant], progress=None) -> tuple[list[MutantResult], int]:
+    def run(self, mutants: list[Mutant], progress=None, subsets: dict[int, list[str]] | None = None) -> tuple[list[MutantResult], int]:
         """Run the suite against each mutant.
+
+        `subsets` maps a mutant's index to a list of test file paths (relative
+        to the project root) that cover the mutated source file. Mutants with
+        a subset run only those tests; others run the full suite.
 
         Returns (results, n_cached). Cached results are replayed when the
         project fingerprint is unchanged; the suite is only executed for
@@ -171,7 +178,7 @@ class Runner:
 
         fp = None
         cache_results: dict[str, dict] = {}
-        if self.cache_file is not None:
+        if self.cache_file is not None and subsets is None:
             fp = cache_mod.fingerprint(self.project_root, self.test_command, self.timeout)
             cache_results = cache_mod.load_results(self.cache_file, fp)
 
@@ -209,6 +216,7 @@ class Runner:
                             str(self.project_root),
                             test_cmd,
                             timeout,
+                            subsets.get(i) if subsets else None,
                         )
                         for i in pending
                     ]

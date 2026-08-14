@@ -25,12 +25,15 @@ mutation-gate run --diff                   # gate only lines changed vs HEAD (PR
 | --- | --- | --- |
 | `--min-score 0.8` | run | exit 1 unless score ≥ 80% |
 | `--coverage-guided` | run | only mutate lines the suite actually executes (needs `coverage`) |
+| `--test-subset` | run | run only the tests that touch each mutated file (needs `coverage`) |
 | `--diff` | run | only mutate lines changed vs `HEAD` in git |
 | `--files a.py b.py` | run/mutate | only mutate the given files |
 | `--operators comparison,binop` | run/mutate/verify | restrict the operator set |
 | `--junit file.xml` | run | write JUnit XML for CI ingestion |
+| `--html file.html` | run | write a self-contained HTML report |
 | `--json file.json` | run/verify | write machine-readable results |
 | `--no-cache` | run/verify | disable the on-disk result cache |
+| `--github-comment` | run | post a markdown PR comment (needs `GITHUB_TOKEN` in Actions) |
 | `--workers N`, `--timeout N` | run/verify | tune parallelism / per-mutant timeout |
 | `--ignore-baseline` | run | mutate even if the suite currently fails |
 | `--gate 0.6` | verify | exit 1 unless this test's contribution ≥ 60% |
@@ -72,14 +75,18 @@ gate at 80%, and uploads the JUnit report as an artifact). Or call the action di
   with:
     min-score: 0.8
     args: --coverage-guided
+    github-token: ${{ secrets.GITHUB_TOKEN }}   # optional — posts the report as a PR comment
 ```
+
+Give the workflow `permissions: pull-requests: write` and pass `github-token` to post the
+mutation report as a comment on every PR:
 
 ## Layout
 
 - `src/mutation_gate/` — engine (operators, generation, runner, cache, coverage, verify, gate)
 - `examples/demo/` — dogfood project with real tests vs theater tests
 - `examples/ci/` — GitHub Action workflow template
-- `tests/` — the tool's own test suite (59 tests)
+- `tests/` — the tool's own test suite (71 tests)
 
 ## Roadmap
 

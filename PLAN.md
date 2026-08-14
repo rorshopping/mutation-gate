@@ -17,11 +17,15 @@ ones — by measuring whether a test suite actually proves behavior, and gating 
 ## Shipped (v0.1 + v0.2)
 
 ### CLI: `init | run | verify | mutate`
-- `run` — full-project mutation score, parallel across worker processes, text/JSON/JUnit
+- `run` — full-project mutation score, parallel across worker processes, text/JSON/JUnit/HTML
   reports, `--min-score` CI gate (0 pass / 1 fail).
 - `verify <testfile>` — per-test-file contribution (coverage-guided). Low kill/reach = theater.
 - `mutate` — generate/list mutants without running; `--out` dumps sources + manifest.
 - `init` — scaffold `.mutation-gate.toml`.
+- `--test-subset` — per-mutant test attribution: run only the tests that cover the mutated
+  file (identical score, much faster).
+- `--github-comment` — in GitHub Actions, post the mutation report as a PR comment
+  (markdown table of survivors + gate verdict).
 
 ### Engine
 - 12 AST operators (stdlib `ast`, `ast.unparse`): comparison flips incl. `in ↔ not in` and
@@ -39,15 +43,16 @@ ones — by measuring whether a test suite actually proves behavior, and gating 
   `--operators`, `--files`, `--workers`, `--timeout`, `--no-cache` overrides.
 
 ### Tests
-59 tests: operators, generation, config, scoring/gate, cache, diff parsing, JUnit/JSON
-reports, full pipeline + theater-detection integration.
+71 tests: operators, generation, config, scoring/gate, cache, diff parsing, JUnit/JSON/HTML
+reports, PR-comment rendering, full pipeline + theater-detection integration.
 
 ### Demo / CI
 - `examples/demo` — real tests score 91.5%; theater test contributes ~28% and is gated out.
-- `examples/ci/mutation-gate.yml` — GitHub Action: install, gate at 80%, upload JUnit.
+- `examples/ci/mutation-gate.yml` — GitHub Action: install, gate at 80%, upload JUnit,
+  optional PR comment via `github-token`.
 
 ## Roadmap
 - v0.3: JS/TS target (jsdiff/Babel); hosted distributed runner (the monetization);
-  GitHub Action as a reusable action + PR comments; `verify` gate wiring into PR checks.
+  GitHub App; `verify` gate wiring into PR checks.
 - Known limits: `ast.unparse` reformats files (comments/encoding dropped) — acceptable
   trade-off for one-mutant-per-file correctness.
