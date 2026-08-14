@@ -39,6 +39,23 @@ _IGNORE_DIRS = {
 }
 
 
+def _resolve_cmd(parts: list[str]) -> list[str]:
+    """Resolve the executable, wrapping .cmd/.bat via cmd.exe on Windows.
+
+    CreateProcess cannot exec npm.cmd directly (WinError 2 / 193); shutil.which
+    resolves it via PATHEXT, and .cmd/.bat shims must run through cmd /c.
+    """
+    resolved = shutil.which(parts[0])
+    if not resolved:
+        return parts
+    if resolved.lower().endswith((".cmd", ".bat")):
+        comspec = os.environ.get("COMSPEC", "cmd.exe")
+        return [comspec, "/c", *parts]
+    if resolved.lower() != parts[0].lower():
+        return [resolved, *parts[1:]]
+    return parts
+
+
 def _copy_worktree(src: Path, dst: Path) -> None:
     dst_tmp = Path(str(dst) + ".tmp")
     shutil.rmtree(dst_tmp, ignore_errors=True)
@@ -87,6 +104,10 @@ def _ensure_worktree(project_root: Path, pool_dir: Path) -> Path:
 def _run_one(workroot: Path, mutant: Mutant, test_cmd: list[str], timeout: int) -> MutantResult:
     """Apply one mutant in a worktree, run the suite, restore the file."""
     src = Path(workroot) / mutant.file
+    # Safety: never write outside the worktree (absolute paths would resolve
+    # to the real project — see the historical corruption bug).
+    if not str(src.resolve()).startswith(str(workroot.resolve())):
+        raise ValueError(f"mutant file escapes worktree: {mutant.file}")
     orig = src.read_text(encoding="utf-8")
     try:
         src.write_text(mutant.source, encoding="utf-8")
@@ -149,7 +170,7 @@ class Runner:
             return [sys.executable, "-m", "pytest", *parts[1:]]
         if parts[0] in ("python", "python3"):
             return parts
-        return [sys.executable, "-m", *parts]
+        return _resolve_cmd(parts)
 
     def baseline(self) -> tuple[bool, str]:
         """Run suite unmuted; True if baseline passes (exit 0)."""

@@ -43,7 +43,7 @@ def render_report(report: Report) -> str:
 
 def render_verify(vr: VerifyResult, gate_score: float | None = None) -> str:
     if not vr.coverage_available:
-        cov_note = "  [coverage.py not found — running against ALL mutants, no filtering]"
+        cov_note = "  [no line filtering — running against ALL mutants]"
     else:
         cov_note = ""
     lines = [

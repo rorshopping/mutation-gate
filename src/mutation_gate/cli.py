@@ -42,8 +42,33 @@ def _score(raw: str) -> float:
     return v
 
 
-def _load_mutants(root: Path, cfg, args) -> list:
+def _detect_language(root: Path, cfg) -> str:
+    """Return 'python' or 'js' based on config.language, falling back to auto-detect."""
+    lang = (cfg.language or "auto").strip().lower()
+    if lang == "python":
+        return "python"
+    if lang == "js":
+        return "js"
+    from . import js as js_mod
+
+    if js_mod.detect_js(root, "auto"):
+        if js_mod.js_available(root):
+            return "js"
+        if not collect_python_files(root, cfg):
+            print(
+                "⚠️  JS/TS project detected but @babel packages not found — "
+                "run `npm install -D @babel/parser @babel/traverse @babel/generator @babel/types`.",
+                file=sys.stderr,
+            )
+            return "js"
+    return "python"
+
+
+def _load_mutants(root: Path, cfg, args, language: str) -> list:
     """Collect source files, apply --files/--diff/coverage filters, generate mutants."""
+    if language == "js":
+        return _load_mutants_js(root, cfg, args)
+
     files = collect_python_files(root, cfg)
     ops = cfg.effective_operators()
 
@@ -68,7 +93,7 @@ def _load_mutants(root: Path, cfg, args) -> list:
             keep = [f for f in files if _rel(root, f) in changed_lines]
             if not keep:
                 print("No modified files to mutate — nothing to gate.", file=sys.stderr)
-                return [], None
+                return []
             files = keep
 
     covered: dict[Path, set[int]] | None = None
@@ -99,7 +124,44 @@ def _load_mutants(root: Path, cfg, args) -> list:
                 if m.lineno not in lines:
                     continue
             mutants.append(m)
-    return mutants, covered
+    return mutants
+
+
+def _load_mutants_js(root: Path, cfg, args) -> list:
+    from . import js as js_mod
+
+    ops = cfg.operators
+    files = js_mod.collect_js_files(root, args.files)
+
+    changed_lines: dict[Path, set[int]] | None = None
+    if getattr(args, "diff", False):
+        changed_lines = git_changed_lines(root)
+        if changed_lines is None:
+            print("⚠️  --diff requested but this is not a git repo — running full suite.", file=sys.stderr)
+        else:
+            files = [f for f in files if _rel(root, f) in changed_lines]
+            if not files:
+                print("No modified files to mutate — nothing to gate.", file=sys.stderr)
+                return []
+
+    if getattr(args, "coverage_guided", False) or cfg.coverage_guided:
+        print("⚠️  coverage-guided is Python-only — ignoring for JS target.", file=sys.stderr)
+    if getattr(args, "test_subset", False) or cfg.test_subset:
+        print("⚠️  test subsetting is Python-only — ignoring for JS target.", file=sys.stderr)
+
+    mutants = []
+    for f in files:
+        rel = f.relative_to(root)
+        try:
+            for m in js_mod.generate_js_mutants(root, rel, operators=ops):
+                if changed_lines is not None:
+                    lines = changed_lines.get(rel, set())
+                    if m.lineno not in lines:
+                        continue
+                mutants.append(m)
+        except RuntimeError as exc:
+            print(f"⚠️  {exc}", file=sys.stderr)
+    return mutants
 
 
 def _rel(root: Path, p: Path) -> Path:
@@ -131,10 +193,14 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.no_cache:
         cfg.cache = False
 
-    mutants, _covered = _load_mutants(root, cfg, args)
+    language = _detect_language(root, cfg)
+    if language == "js" and cfg.test_command == "pytest":
+        cfg.test_command = "npm test"
+
+    mutants = _load_mutants(root, cfg, args, language)
 
     subsets: dict[int, list[str]] | None = None
-    if getattr(args, "test_subset", False) or cfg.test_subset:
+    if language == "python" and (getattr(args, "test_subset", False) or cfg.test_subset):
         if not coverage_available():
             print("⚠️  coverage.py not installed — --test-subset disabled. Install with `pip install coverage`.", file=sys.stderr)
         else:
@@ -165,6 +231,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 1
 
     valid, invalid = filter_invalid(mutants)
+    if language == "js":
+        valid, invalid = mutants, []
 
     if not valid and not invalid:
         print("No valid mutants generated from the selected files.")
@@ -231,7 +299,16 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if args.no_cache:
         cfg.cache = False
 
-    vr = verify_project(root, Path(args.test_file), cfg)
+    language = _detect_language(root, cfg)
+    if language == "js":
+        from . import js as js_mod
+
+        if not js_mod.js_available(root):
+            print("⚠️  JS target needs Node + @babel packages installed in the project.", file=sys.stderr)
+            return 1
+        vr = js_mod.verify_js_project(root, Path(args.test_file), cfg)
+    else:
+        vr = verify_project(root, Path(args.test_file), cfg)
     print(render_verify(vr, gate_score=args.gate))
     if args.json:
         Path(args.json).write_text(render_json(verify_to_dict(vr)), encoding="utf-8")
@@ -248,8 +325,11 @@ def cmd_mutate(args: argparse.Namespace) -> int:
     cfg = load_config(root, args.config)
     _apply_operator_filter(args, cfg)
 
-    mutants, _covered = _load_mutants(root, cfg, args)
+    language = _detect_language(root, cfg)
+    mutants = _load_mutants(root, cfg, args, language)
     valid, invalid = filter_invalid(mutants)
+    if language == "js":
+        valid, invalid = mutants, []
 
     print(render_mutants(valid))
     if invalid:
@@ -262,11 +342,12 @@ def cmd_mutate(args: argparse.Namespace) -> int:
         print(f"\nBy operator: {by_op}")
 
     if args.out:
+        suffix = "js" if language == "js" else "py"
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
         manifest = []
         for i, m in enumerate(valid):
-            name = f"mutant-{i:04d}-{m.file.stem}-{m.lineno}-{m.operator}.py"
+            name = f"mutant-{i:04d}-{m.file.stem}-{m.lineno}-{m.operator}.{suffix}"
             (out / name).write_text(m.source, encoding="utf-8")
             manifest.append({"file": name, "source": str(m.file), "line": m.lineno, "operator": m.operator})
         (out / "manifest.json").write_text(render_json(manifest), encoding="utf-8")
@@ -288,6 +369,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         "cache = true\n"
         "coverage_guided = false\n"
         "mutate_docstrings = false\n"
+        'language = "auto"\n'
         'include_globs = ["**/*.py"]\n'
         'exclude_globs = ["**/test_*.py", "**/*_test.py", "**/tests/**", "**/.git/**"]\n',
         encoding="utf-8",

@@ -64,6 +64,25 @@ mutation-gate verify tests/test_theater.py            # theater test: contributi
 `verify` is the AI-test wedge: it runs the suite with **only** that test file against every
 mutant the file's own coverage reaches. High reach / low kill = the test has no teeth.
 
+## JS / TypeScript target
+
+Mutation-gate also mutates JavaScript and TypeScript (`.js/.jsx/.ts/.tsx`) via a bundled
+Babel engine, and runs the suite with `npm test` (or any command in `test_command`). Auto-
+detected when a `package.json` + source files are present (override with `language =
+"python" | "js"` in config). Test files (`*.test.js`, `*.spec.js`, `test/`, `__tests__/`) are
+never mutated. Requires Node + Babel packages in the project:
+
+```
+npm install -D @babel/parser @babel/traverse @babel/generator @babel/types
+cd examples/demo-js
+mutation-gate run . --min-score 0.8        # real tests: 93.8%
+mutation-gate verify test/math.theater.test.js   # theater test: 22.9%
+```
+
+Same 10 core operators as Python (comparison, binop, boolop, bool_literal, num_literal,
+str_literal, remove_not, negate_condition, return_none, remove_stmt). Coverage-guided and
+test-subset modes are Python-only for now.
+
 ## CI
 
 Copy `examples/ci/mutation-gate.yml` into your repo's `.github/workflows/` (it uses the
@@ -84,11 +103,14 @@ mutation report as a comment on every PR:
 ## Layout
 
 - `src/mutation_gate/` — engine (operators, generation, runner, cache, coverage, verify, gate)
-- `examples/demo/` — dogfood project with real tests vs theater tests
+- `src/mutation_gate/js/engine.mjs` — Babel-based JS/TS mutator (Node side)
+- `examples/demo/` — Python dogfood project with real tests vs theater tests
+- `examples/demo-js/` — JS/TS dogfood project (Node's built-in test runner)
 - `examples/ci/` — GitHub Action workflow template
-- `tests/` — the tool's own test suite (71 tests)
+- `tests/` — the tool's own test suite (79 tests)
 
 ## Roadmap
 
 - v0.2 ✅ shared worktree cache, on-disk result cache, coverage-guided `run`, delta mode
-- v0.3: JS/TS target; hosted distributed runner (monetization); GitHub App / Action parity
+- v0.3 ✅ JS/TS target (Babel engine, npm test runner)
+- v0.4: hosted distributed runner (monetization); GitHub App / Action parity; PR checks

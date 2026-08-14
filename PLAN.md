@@ -38,21 +38,27 @@ ones — by measuring whether a test suite actually proves behavior, and gating 
 - **On-disk result cache** (`.mutation-gate/cache.json`): keyed by a fingerprint of the test
   command + every `.py` file in the project. Unchanged re-runs replay instantly.
 - **Coverage-guided `run`** (`--coverage-guided`): only mutate lines the suite executes.
+- **Per-mutant test subsetting** (`--test-subset`): coverage attribution maps each source
+  file to the tests that touch it; each mutant runs only those tests (identical score).
 - **Delta mode** (`--diff`): git-aware — only mutate lines changed vs `HEAD`.
+- **JS/TS target**: bundled Babel engine (`js/engine.mjs`) mutates `.js/.jsx/.ts/.tsx`
+  (10 operators), runs via `npm test` (auto-detected with `package.json`); test files never
+  mutated; `verify` supported (no coverage filtering yet).
 - Config precedence: CLI > `.mutation-gate.toml` > `[tool.mutation-gate]` > defaults, with
   `--operators`, `--files`, `--workers`, `--timeout`, `--no-cache` overrides.
 
 ### Tests
-71 tests: operators, generation, config, scoring/gate, cache, diff parsing, JUnit/JSON/HTML
-reports, PR-comment rendering, full pipeline + theater-detection integration.
+79 tests: operators, generation, config, scoring/gate, cache, diff parsing, JUnit/JSON/HTML
+reports, PR-comment rendering, JS engine + JS verify, full pipeline + theater detection.
 
 ### Demo / CI
-- `examples/demo` — real tests score 91.5%; theater test contributes ~28% and is gated out.
+- `examples/demo` — Python: real tests 91.5%; theater test ~28% and gated out.
+- `examples/demo-js` — JS/TS: real tests 93.8%; theater test 22.9%.
 - `examples/ci/mutation-gate.yml` — GitHub Action: install, gate at 80%, upload JUnit,
   optional PR comment via `github-token`.
 
 ## Roadmap
-- v0.3: JS/TS target (jsdiff/Babel); hosted distributed runner (the monetization);
-  GitHub App; `verify` gate wiring into PR checks.
-- Known limits: `ast.unparse` reformats files (comments/encoding dropped) — acceptable
+- v0.4: hosted distributed runner (the monetization); GitHub App; `verify` gate wiring
+  into PR checks; JS coverage-guided/test-subset parity.
+- Known limits: Python `ast.unparse` reformats files (comments/encoding dropped) — acceptable
   trade-off for one-mutant-per-file correctness.

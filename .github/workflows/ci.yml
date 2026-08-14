@@ -38,3 +38,10 @@ jobs:
         run: |
           cd examples/demo
           python -m mutation_gate.cli verify tests/test_real.py .
+      - name: Dogfood — JS/TS target (demo-js)
+        run: |
+          cd examples/demo-js
+          npm install --no-fund --no-audit
+          npm test
+          python -m mutation_gate.cli run . --min-score 0.8 --no-cache
+          python -m mutation_gate.cli verify test/math.real.test.js .

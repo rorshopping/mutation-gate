@@ -38,6 +38,7 @@ class Config:
     test_subset: bool = False
     mutate_docstrings: bool = False
     operators: list[str] | None = None
+    language: str = "auto"  # "auto" | "python" | "js"
 
     def resolve(self, root: Path) -> "Config":
         self.project_root = root.resolve()
