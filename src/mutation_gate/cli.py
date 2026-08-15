@@ -43,12 +43,18 @@ def _score(raw: str) -> float:
 
 
 def _detect_language(root: Path, cfg) -> str:
-    """Return 'python' or 'js' based on config.language, falling back to auto-detect."""
+    """Return the active language ('python', 'js', 'java', 'csharp', 'cpp').
+
+    Config wins; otherwise auto-detect with a js > csharp > java > cpp > python priority.
+    """
+    from . import cfamily as cf
+
     lang = (cfg.language or "auto").strip().lower()
-    if lang == "python":
-        return "python"
-    if lang == "js":
-        return "js"
+    if lang != "auto":
+        if lang == "c++":
+            lang = "cpp"
+        if lang in ("python", "js") or lang in cf.LANGUAGES:
+            return lang
     from . import js as js_mod
 
     if js_mod.detect_js(root, "auto"):
@@ -61,6 +67,12 @@ def _detect_language(root: Path, cfg) -> str:
                 file=sys.stderr,
             )
             return "js"
+    if cf.detect_csharp(root):
+        return "csharp"
+    if cf.detect_java(root):
+        return "java"
+    if cf.detect_cpp(root):
+        return "cpp"
     return "python"
 
 
@@ -68,6 +80,10 @@ def _load_mutants(root: Path, cfg, args, language: str) -> list:
     """Collect source files, apply --files/--diff/coverage filters, generate mutants."""
     if language == "js":
         return _load_mutants_js(root, cfg, args)
+    from . import cfamily as cf
+
+    if language in cf.LANGUAGES:
+        return _load_mutants_cf(root, cfg, args, language)
 
     files = collect_python_files(root, cfg)
     ops = cfg.effective_operators()
@@ -173,6 +189,45 @@ def _load_mutants_js(root: Path, cfg, args) -> list:
     return mutants
 
 
+def _load_mutants_cf(root: Path, cfg, args, language: str) -> list:
+    """Collect Java/C#/C++ source files, apply --files/--diff filters, generate mutants."""
+    from . import cfamily as cf
+
+    files = cf.collect_files(root, language, args.files)
+
+    changed_lines: dict[Path, set[int]] | None = None
+    if getattr(args, "diff", False):
+        changed_lines = git_changed_lines(root)
+        if changed_lines is None:
+            print("⚠️  --diff requested but this is not a git repo — running full suite.", file=sys.stderr)
+        else:
+            files = [f for f in files if _rel(root, f) in changed_lines]
+            if not files:
+                print("No modified files to mutate — nothing to gate.", file=sys.stderr)
+                return []
+
+    if getattr(args, "coverage_guided", False) or cfg.coverage_guided:
+        print(
+            f"⚠️  coverage-guided mode is not supported for {language} — running without line filtering.",
+            file=sys.stderr,
+        )
+
+    mutants = []
+    for f in files:
+        rel = _rel(root, f)
+        try:
+            source = f.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for m in cf.generate_cfamily_mutants(source, rel, language, operators=cfg.operators):
+            if changed_lines is not None:
+                lines = changed_lines.get(rel, set())
+                if m.lineno not in lines:
+                    continue
+            mutants.append(m)
+    return mutants
+
+
 def _rel(root: Path, p: Path) -> Path:
     try:
         return p.relative_to(root)
@@ -227,10 +282,15 @@ def _verify_changed_tests(root: Path, cfg, args, language: str, gate: float) -> 
         return True
 
     test_files: list[Path] = []
+    from . import cfamily as cf
+
     for name in changed:
         rel = Path(name)
         if language == "python":
             if rel.suffix == ".py" and _is_py_test_file(rel) and (root / rel).exists():
+                test_files.append(rel)
+        elif language in cf.LANGUAGES:
+            if rel.suffix in cf.SOURCE_EXTS[language] and cf._is_test_file(rel, language) and (root / rel).exists():
                 test_files.append(rel)
         else:
             from . import js as js_mod
@@ -247,6 +307,8 @@ def _verify_changed_tests(root: Path, cfg, args, language: str, gate: float) -> 
     for tf in sorted(test_files):
         if language == "python":
             vr = verify_project(root, tf, cfg)
+        elif language in cf.LANGUAGES:
+            vr = cf.verify_cfamily_project(root, tf, language, cfg)
         else:
             from . import js as js_mod
 
@@ -271,6 +333,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     language = _detect_language(root, cfg)
     if language == "js" and cfg.test_command == "pytest":
         cfg.test_command = "npm test"
+    from . import cfamily as cf
+
+    if language in cf.LANGUAGES and cfg.test_command in ("pytest", "pytest -q"):
+        cfg.test_command = cf.default_test_command(root, language)
 
     mutants = _load_mutants(root, cfg, args, language)
 
@@ -291,7 +357,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     )
                     subsets, reduced = _build_subsets(source_to_tests, mutants)
                     print(f"Test subsetting: {reduced}/{len(mutants)} mutants will run a reduced test set.", file=sys.stderr)
-        else:
+        elif language == "js":
             from . import js as js_mod
 
             if not js_mod.node_available():
@@ -307,6 +373,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                     )
                     subsets, reduced = _build_subsets(source_to_tests, mutants)
                     print(f"Test subsetting: {reduced}/{len(mutants)} mutants will run a reduced test set.", file=sys.stderr)
+        else:
+            print(f"⚠️  --test-subset is not supported for {language} — running the full suite per mutant.", file=sys.stderr)
 
     cache_file = root / cfg.cache_file if cfg.cache else None
     runner = Runner(root, test_command=cfg.test_command, timeout=cfg.timeout, workers=cfg.workers, cache_file=cache_file)
@@ -318,7 +386,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 1
 
     valid, invalid = filter_invalid(mutants)
-    if language == "js":
+    if language != "python":
         valid, invalid = mutants, []
 
     if not valid and not invalid:
@@ -399,6 +467,11 @@ def cmd_verify(args: argparse.Namespace) -> int:
         cfg.cache = False
 
     language = _detect_language(root, cfg)
+    from . import cfamily as cf
+
+    if language in cf.LANGUAGES and cfg.test_command in ("pytest", "pytest -q"):
+        cfg.test_command = cf.default_test_command(root, language)
+
     if language == "js":
         from . import js as js_mod
 
@@ -406,6 +479,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
             print("⚠️  JS target needs Node + @babel packages installed in the project.", file=sys.stderr)
             return 1
         vr = js_mod.verify_js_project(root, Path(args.test_file), cfg)
+    elif language in cf.LANGUAGES:
+        vr = cf.verify_cfamily_project(root, Path(args.test_file), language, cfg)
     else:
         vr = verify_project(root, Path(args.test_file), cfg)
     print(render_verify(vr, gate_score=args.gate))
@@ -427,7 +502,7 @@ def cmd_mutate(args: argparse.Namespace) -> int:
     language = _detect_language(root, cfg)
     mutants = _load_mutants(root, cfg, args, language)
     valid, invalid = filter_invalid(mutants)
-    if language == "js":
+    if language != "python":
         valid, invalid = mutants, []
 
     print(render_mutants(valid))
@@ -441,7 +516,7 @@ def cmd_mutate(args: argparse.Namespace) -> int:
         print(f"\nBy operator: {by_op}")
 
     if args.out:
-        suffix = "js" if language == "js" else "py"
+        suffix = {"js": "js", "java": "java", "csharp": "cs", "cpp": "cpp"}.get(language, "py")
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
         manifest = []
@@ -460,20 +535,45 @@ def cmd_init(args: argparse.Namespace) -> int:
     if cfg_file.exists():
         print(f"{cfg_file} already exists — leaving as-is.")
         return 0
+    language = _detect_language(root, load_config(root, getattr(args, "config", None)))
+    from . import cfamily as cf
+
+    include_globs = {
+        "python": ["**/*.py"],
+        "js": ["**/*.{js,jsx,ts,tsx}"],
+        "java": ["**/*.java"],
+        "csharp": ["**/*.cs"],
+        "cpp": ["**/*.{cpp,cc,cxx,c,h,hpp,hh,hxx}"],
+    }.get(language, ["**/*.py"])
+    exclude_globs = {
+        "python": ["**/test_*.py", "**/*_test.py", "**/tests/**", "**/.git/**"],
+        "js": ["**/*.test.*", "**/*.spec.*", "**/test/**", "**/tests/**", "**/__tests__/**", "**/node_modules/**"],
+        "java": ["**/*Test.java", "**/*Tests.java", "**/src/test/**", "**/target/**", "**/.git/**"],
+        "csharp": ["**/*Tests.cs", "**/*Test.cs", "**/Tests/**", "**/obj/**", "**/bin/**", "**/.git/**"],
+        "cpp": ["**/test_*", "**/*_test.*", "**/tests/**", "**/build/**", "**/.git/**"],
+    }.get(language, ["**/test_*.py", "**/*_test.py", "**/tests/**", "**/.git/**"])
+    if language in cf.LANGUAGES:
+        test_command = cf.default_test_command(root, language)
+    elif language == "js":
+        test_command = "npm test"
+    else:
+        test_command = "pytest -q"
+    import json
+
     cfg_file.write_text(
         "# Mutation Gate configuration\n"
-        'test_command = "pytest -q"\n'
+        f'test_command = "{test_command}"\n'
         "timeout = 60\n"
         "workers = 4\n"
         "cache = true\n"
         "coverage_guided = false\n"
         "mutate_docstrings = false\n"
-        'language = "auto"\n'
-        'include_globs = ["**/*.py"]\n'
-        'exclude_globs = ["**/test_*.py", "**/*_test.py", "**/tests/**", "**/.git/**"]\n',
+        f'language = "{language}"\n'
+        f"include_globs = {json.dumps(include_globs)}\n"
+        f"exclude_globs = {json.dumps(exclude_globs)}\n",
         encoding="utf-8",
     )
-    print(f"Wrote {cfg_file}")
+    print(f"Wrote {cfg_file} ({language})")
     return 0
 
 

@@ -1,3 +1,3 @@
 """Mutation Gate — mutation testing as the verification gate for AI-written tests."""
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"

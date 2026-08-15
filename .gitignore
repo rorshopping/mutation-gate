@@ -12,3 +12,6 @@ build/
 .mutation-gate/
 mutegate-*/
 node_modules/
+bin/
+obj/
+.vs/

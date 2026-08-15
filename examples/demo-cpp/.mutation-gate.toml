@@ -1,0 +1,4 @@
+test_command = "cmake -P run.cmake"
+timeout = 120
+workers = 4
+language = "cpp"

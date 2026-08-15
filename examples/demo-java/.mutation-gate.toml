@@ -1,0 +1,4 @@
+test_command = "mvn -q test"
+timeout = 120
+workers = 4
+language = "java"

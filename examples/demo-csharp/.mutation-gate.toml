@@ -1,0 +1,4 @@
+test_command = "dotnet run --project Calc"
+timeout = 120
+workers = 4
+language = "csharp"

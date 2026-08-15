@@ -37,6 +37,21 @@ def test_dot_file_overrides_pyproject(tmp_path):
     assert cfg.workers == 8
 
 
+def test_bom_prefixed_config_file_loads(tmp_path):
+    path = tmp_path / "pp2.toml"
+    path.write_bytes(b"\xef\xbb\xbf" + b'timeout = 42\nworkers = 2\n')
+    cfg = load_config(tmp_path, str(path))
+    assert cfg.timeout == 42
+    assert cfg.workers == 2
+
+
+def test_utf16_config_file_loads(tmp_path):
+    path = tmp_path / "utf16.toml"
+    path.write_bytes(b"\xff\xfe" + "timeout = 7\n".encode("utf-16-le"))
+    cfg = load_config(tmp_path, str(path))
+    assert cfg.timeout == 7
+
+
 def test_collect_files(tmp_path):
     (tmp_path / "src").mkdir(parents=True)
     (tmp_path / "src" / "a.py").write_text("x = 1\n")

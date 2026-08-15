@@ -25,10 +25,12 @@ any environment and run:
 mutation-gate run . --min-score 0.8
 ```
 
-Optional extras, both auto-detected:
+Optional extras, all auto-detected:
 - `pip install coverage` **in your project's venv** to enable `--coverage-guided` and
   `--test-subset` (otherwise they're skipped with a notice).
 - JS/TS support needs Node and, in the project: `npm install -D @babel/parser @babel/traverse @babel/generator @babel/types`.
+- Java / C# / C++ support needs that language's build tool available on `PATH`
+  (Maven or Gradle, the `dotnet` SDK, and CMake or Make respectively).
 
 ## Commands
 
@@ -50,8 +52,8 @@ mutation-gate run --remote http://host:8732 --token SECRET   # execute mutants r
 | --- | --- | --- |
 | `--min-score 0.8` | run | exit 1 unless score ≥ 80% |
 | `--verify-changed-tests 0.5` | run | verify every test file changed vs HEAD (incl. untracked); exit 1 if any contribution < 50% |
-| `--coverage-guided` | run | only mutate lines the suite actually executes (Python: `coverage`; JS: Node's test coverage) |
-| `--test-subset` | run | run only the tests that touch each mutated file (Python: `coverage`; JS: Node's test coverage) |
+| `--coverage-guided` | run | only mutate lines the suite actually executes (Python: `coverage`; JS: Node's test coverage; skipped for Java/C#/C++) |
+| `--test-subset` | run | run only the tests that touch each mutated file (Python: `coverage`; JS: Node's test coverage; skipped for Java/C#/C++) |
 | `--diff` | run | only mutate lines changed vs `HEAD` in git |
 | `--files a.py b.py` | run/mutate | only mutate the given files |
 | `--operators comparison,binop` | run/mutate/verify | restrict the operator set |
@@ -114,6 +116,42 @@ reporter) instead of `coverage.py` — e.g. `mutation-gate run . --test-subset` 
 covering test files per mutant, and `verify` filters to the lines the evaluated test actually
 executes.
 
+## Java / C# / C++ targets
+
+Mutation-gate mutates Java (`.java`), C# (`.cs`), and C/C++ (`.cpp/.cc/.cxx/.c/.h/...`)
+via a bundled pure-Python tokenizer engine — no per-language dependencies, and mutations are
+in-place token edits so formatting and comments are preserved byte-for-byte. The suite is run
+with the project's own build tool, auto-detected from config files: Maven/Gradle for Java,
+`dotnet test` for C#, and CMake/ctest or Make for C++ (override any of these with
+`test_command` in config, or on `init`).
+
+Language is auto-detected (build files and source layout; override with `language =
+"python" | "js" | "java" | "csharp" | "cpp"` in config). Test files (`test/`, `tests/`,
+`*Test.*`, `*Tests.*`, `*_test.*`, ...) are never mutated.
+
+```
+cd examples/demo-java
+mvn -q test
+mutation-gate run . --min-score 0.6       # real tests: ~90%
+cd examples/demo-csharp
+dotnet run --project Calc
+mutation-gate run . --min-score 0.6
+cd examples/demo-cpp
+cmake -P run.cmake                        # configures, builds, and runs ctest
+mutation-gate run . --min-score 0.6
+mutation-gate verify tests/test_math.cpp .    # per-test-file contribution
+```
+
+10 core operators apply (comparison, binop, boolop, aug_assign, bool_literal, num_literal,
+str_literal, remove_not, negate_condition, remove_stmt). Because there is no AST/`compile()`
+syntax filter, mutants that fail to compile are counted as **killed** (the standard
+approximation); a few language-specific guardrails keep common false sites out — e.g.
+C/C++ pointer declarations (`const double* p`) aren't treated as multiplication, and
+`str_literal` skips C# interpolated/verbatim and C++ raw/prefixed strings. `verify` runs the
+same toolchain per test file (Maven `-Dtest`, Gradle `--tests`, `dotnet test --filter`); for
+build tools without a per-file filter it runs the full suite and reports the contribution
+across it.
+
 ## Distributed runner
 
 Mutation runs are embarrassingly parallel, so `run` can push the work to any number of
@@ -156,13 +194,15 @@ below 50% fails the gate (the AI-test wedge: coverage alone can't catch it).
 ## Layout
 
 - `src/mutation_gate/` — engine (operators, generation, runner, cache, coverage, verify, gate)
+- `src/mutation_gate/cfamily.py` — pure-Python tokenizer mutator for Java / C# / C++
 - `src/mutation_gate/server.py` — distributed broker (stdlib `http.server`)
 - `src/mutation_gate/distributed.py` — distributed client + worker
 - `src/mutation_gate/js/engine.mjs` — Babel-based JS/TS mutator (Node side)
 - `examples/demo/` — Python dogfood project with real tests vs theater tests
 - `examples/demo-js/` — JS/TS dogfood project (Node's built-in test runner)
+- `examples/demo-java/`, `examples/demo-csharp/`, `examples/demo-cpp/` — C-family dogfood projects
 - `examples/ci/` — GitHub Action workflow template
-- `tests/` — the tool's own test suite (101 tests)
+- `tests/` — the tool's own test suite
 
 ## Roadmap
 
@@ -171,5 +211,7 @@ below 50% fails the gate (the AI-test wedge: coverage alone can't catch it).
 - v0.4 ✅ JS coverage-guided `run` + test subsetting (Node LCOV); `--verify-changed-tests`
   PR gate; more operators
 - v0.5 ✅ distributed runner (`server` / `worker` / `run --remote`)
-- v0.6 — hosted distributed runner (the opencode-go model), GitHub App / PR checks,
-  JS/TS coverage parity on `verify`
+- v0.6 ✅ Java / C# / C++ targets (pure-Python tokenizer engine, build-tool test runner,
+  per-test-file `verify`)
+- v0.7 — hosted distributed runner (the opencode-go model), GitHub App / PR checks,
+  coverage-guided `run` + `--test-subset` parity for the C-family targets

@@ -50,3 +50,18 @@ jobs:
           python -m mutation_gate.cli run . --min-score 0.8 --no-cache
           python -m mutation_gate.cli run . --min-score 0.8 --no-cache --coverage-guided
           python -m mutation_gate.cli verify test/math.real.test.js .
+      - name: Dogfood — Java target (demo-java)
+        run: |
+          cd examples/demo-java
+          mvn -q test
+          python -m mutation_gate.cli run . --min-score 0.6 --no-cache
+      - name: Dogfood — C# target (demo-csharp)
+        run: |
+          cd examples/demo-csharp
+          dotnet run --project Calc
+          python -m mutation_gate.cli run . --min-score 0.6 --no-cache
+      - name: Dogfood — C++ target (demo-cpp)
+        run: |
+          cd examples/demo-cpp
+          cmake -P run.cmake
+          python -m mutation_gate.cli run . --min-score 0.6 --no-cache

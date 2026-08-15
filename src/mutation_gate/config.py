@@ -38,7 +38,7 @@ class Config:
     test_subset: bool = False
     mutate_docstrings: bool = False
     operators: list[str] | None = None
-    language: str = "auto"  # "auto" | "python" | "js"
+    language: str = "auto"  # "auto" | "python" | "js" | "java" | "csharp" | "cpp"
 
     def resolve(self, root: Path) -> "Config":
         self.project_root = root.resolve()
@@ -66,6 +66,20 @@ def _apply(cfg: Config, data: dict, source: str) -> Config:
     return cfg
 
 
+def _read_toml(path: Path) -> dict:
+    """Read a TOML file, tolerating UTF-8/UTF-16 BOMs (PowerShell writes them)."""
+    data = path.read_bytes()
+    if data.startswith(b"\xef\xbb\xbf"):
+        text = data[3:].decode("utf-8")
+    elif data.startswith(b"\xff\xfe"):
+        text = data[2:].decode("utf-16-le")
+    elif data.startswith(b"\xfe\xff"):
+        text = data[2:].decode("utf-16-be")
+    else:
+        text = data.decode("utf-8")
+    return tomllib.loads(text)
+
+
 def load_config(root: Path, explicit_file: str | None = None) -> Config:
     cfg = Config()
     root = root.resolve()
@@ -73,7 +87,7 @@ def load_config(root: Path, explicit_file: str | None = None) -> Config:
     pyproject = root / "pyproject.toml"
     if pyproject.exists():
         try:
-            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            data = _read_toml(pyproject)
             cfg = _apply(cfg, data.get("tool", {}).get("mutation-gate", {}), "pyproject.toml [tool.mutation-gate]")
         except tomllib.TOMLDecodeError:
             pass
@@ -83,11 +97,11 @@ def load_config(root: Path, explicit_file: str | None = None) -> Config:
         if not path.is_absolute():
             path = root / path
         if path.exists():
-            cfg = _apply(cfg, tomllib.loads(path.read_text(encoding="utf-8")), str(path))
+            cfg = _apply(cfg, _read_toml(path), str(path))
     else:
         auto = root / ".mutation-gate.toml"
         if auto.exists():
-            cfg = _apply(cfg, tomllib.loads(auto.read_text(encoding="utf-8")), ".mutation-gate.toml")
+            cfg = _apply(cfg, _read_toml(auto), ".mutation-gate.toml")
 
     return cfg.resolve(root)
 
