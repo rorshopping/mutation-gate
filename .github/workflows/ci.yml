@@ -65,3 +65,20 @@ jobs:
           cd examples/demo-cpp
           cmake -P run.cmake
           python -m mutation_gate.cli run . --min-score 0.6 --no-cache
+
+  test-swift:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Test suite (Swift target)
+        run: pytest tests/test_swift.py -q
+      - name: Dogfood — Swift target (demo-swift)
+        run: |
+          cd examples/demo-swift
+          swift test
+          python -m mutation_gate.cli run . --min-score 0.85 --no-cache

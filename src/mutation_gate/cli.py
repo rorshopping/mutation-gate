@@ -43,9 +43,9 @@ def _score(raw: str) -> float:
 
 
 def _detect_language(root: Path, cfg) -> str:
-    """Return the active language ('python', 'js', 'java', 'csharp', 'cpp').
+    """Return the active language ('python', 'js', 'java', 'csharp', 'cpp', 'swift').
 
-    Config wins; otherwise auto-detect with a js > csharp > java > cpp > python priority.
+    Config wins; otherwise auto-detect with a js > csharp > java > cpp > swift > python priority.
     """
     from . import cfamily as cf
 
@@ -54,6 +54,10 @@ def _detect_language(root: Path, cfg) -> str:
         if lang == "c++":
             lang = "cpp"
         if lang in ("python", "js") or lang in cf.LANGUAGES:
+            return lang
+        from . import swift as sw_mod
+
+        if lang in sw_mod.LANGUAGES:
             return lang
     from . import js as js_mod
 
@@ -73,6 +77,10 @@ def _detect_language(root: Path, cfg) -> str:
         return "java"
     if cf.detect_cpp(root):
         return "cpp"
+    from . import swift as sw_mod
+
+    if sw_mod.detect_swift(root):
+        return "swift"
     return "python"
 
 
@@ -80,6 +88,8 @@ def _load_mutants(root: Path, cfg, args, language: str) -> list:
     """Collect source files, apply --files/--diff/coverage filters, generate mutants."""
     if language == "js":
         return _load_mutants_js(root, cfg, args)
+    if language == "swift":
+        return _load_mutants_swift(root, cfg, args)
     from . import cfamily as cf
 
     if language in cf.LANGUAGES:
@@ -239,6 +249,45 @@ def _load_mutants_cf(root: Path, cfg, args, language: str) -> list:
     return mutants
 
 
+def _load_mutants_swift(root: Path, cfg, args) -> list:
+    """Collect Swift source files, apply --files/--diff filters, generate mutants."""
+    from . import swift as sw
+
+    files = sw.collect_files(root, "swift", getattr(args, "files", None))
+
+    changed_lines: dict[Path, set[int]] | None = None
+    if getattr(args, "diff", False):
+        changed_lines = git_changed_lines(root)
+        if changed_lines is None:
+            print("⚠️  --diff requested but this is not a git repo — running full suite.", file=sys.stderr)
+        else:
+            files = [f for f in files if _rel(root, f) in changed_lines]
+            if not files:
+                print("No modified files to mutate — nothing to gate.", file=sys.stderr)
+                return []
+
+    if getattr(args, "coverage_guided", False) or cfg.coverage_guided:
+        print(
+            "⚠️  coverage-guided mode is not supported for swift — running without line filtering.",
+            file=sys.stderr,
+        )
+
+    mutants = []
+    for f in files:
+        rel = _rel(root, f)
+        try:
+            source = f.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for m in sw.generate_swift_mutants(source, rel, operators=cfg.operators):
+            if changed_lines is not None:
+                lines = changed_lines.get(rel, set())
+                if m.lineno not in lines:
+                    continue
+            mutants.append(m)
+    return mutants
+
+
 def _rel(root: Path, p: Path) -> Path:
     try:
         return p.relative_to(root)
@@ -300,6 +349,15 @@ def _verify_changed_tests(root: Path, cfg, args, language: str, gate: float) -> 
         if language == "python":
             if rel.suffix == ".py" and _is_py_test_file(rel) and (root / rel).exists():
                 test_files.append(rel)
+        elif language == "swift":
+            from . import swift as sw_mod
+
+            if (
+                rel.suffix in sw_mod.SOURCE_EXTS["swift"]
+                and sw_mod._is_test_file(rel)
+                and (root / rel).exists()
+            ):
+                test_files.append(rel)
         elif language in cf.LANGUAGES:
             if rel.suffix in cf.SOURCE_EXTS[language] and cf._is_test_file(rel, language) and (root / rel).exists():
                 test_files.append(rel)
@@ -318,6 +376,10 @@ def _verify_changed_tests(root: Path, cfg, args, language: str, gate: float) -> 
     for tf in sorted(test_files):
         if language == "python":
             vr = verify_project(root, tf, cfg)
+        elif language == "swift":
+            from . import swift as sw_mod
+
+            vr = sw_mod.verify_swift_project(root, tf, "swift", cfg)
         elif language in cf.LANGUAGES:
             vr = cf.verify_cfamily_project(root, tf, language, cfg)
         else:
@@ -350,9 +412,12 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     if language in cf.LANGUAGES and cfg.test_command in ("pytest", "pytest -q"):
         cfg.test_command = cf.default_test_command(root, language)
+    if language == "swift" and cfg.test_command == "pytest":
+        from . import swift as sw_mod
+
+        cfg.test_command = sw_mod.default_test_command(root, "swift")
 
     mutants = _load_mutants(root, cfg, args, language)
-
     subsets: dict[int, list[str]] | None = None
     if getattr(args, "test_subset", False) or cfg.test_subset:
         if language == "python":
@@ -491,6 +556,10 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     if language in cf.LANGUAGES and cfg.test_command in ("pytest", "pytest -q"):
         cfg.test_command = cf.default_test_command(root, language)
+    if language == "swift" and cfg.test_command == "pytest":
+        from . import swift as sw_mod
+
+        cfg.test_command = sw_mod.default_test_command(root, "swift")
 
     if language == "js":
         from . import js as js_mod
@@ -499,6 +568,10 @@ def cmd_verify(args: argparse.Namespace) -> int:
             print("⚠️  JS target needs Node + @babel packages installed in the project.", file=sys.stderr)
             return 1
         vr = js_mod.verify_js_project(root, Path(args.test_file), cfg)
+    elif language == "swift":
+        from . import swift as sw_mod
+
+        vr = sw_mod.verify_swift_project(root, Path(args.test_file), "swift", cfg)
     elif language in cf.LANGUAGES:
         vr = cf.verify_cfamily_project(root, Path(args.test_file), language, cfg)
     else:
@@ -536,7 +609,7 @@ def cmd_mutate(args: argparse.Namespace) -> int:
         print(f"\nBy operator: {by_op}")
 
     if args.out:
-        suffix = {"js": "js", "java": "java", "csharp": "cs", "cpp": "cpp"}.get(language, "py")
+        suffix = {"js": "js", "java": "java", "csharp": "cs", "cpp": "cpp", "swift": "swift"}.get(language, "py")
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
         manifest = []
@@ -564,6 +637,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         "java": ["**/*.java"],
         "csharp": ["**/*.cs"],
         "cpp": ["**/*.{cpp,cc,cxx,c,h,hpp,hh,hxx}"],
+        "swift": ["**/*.swift"],
     }.get(language, ["**/*.py"])
     exclude_globs = {
         "python": ["**/test_*.py", "**/*_test.py", "**/tests/**", "**/.git/**"],
@@ -571,9 +645,14 @@ def cmd_init(args: argparse.Namespace) -> int:
         "java": ["**/*Test.java", "**/*Tests.java", "**/src/test/**", "**/target/**", "**/.git/**"],
         "csharp": ["**/*Tests.cs", "**/*Test.cs", "**/Tests/**", "**/obj/**", "**/bin/**", "**/.git/**"],
         "cpp": ["**/test_*", "**/*_test.*", "**/tests/**", "**/build/**", "**/.git/**"],
+        "swift": ["**/*Tests.swift", "**/*Test.swift", "**/Tests/**", "**/DerivedData/**", "**/.build/**", "**/.git/**"],
     }.get(language, ["**/test_*.py", "**/*_test.py", "**/tests/**", "**/.git/**"])
     if language in cf.LANGUAGES:
         test_command = cf.default_test_command(root, language)
+    elif language == "swift":
+        from . import swift as sw_mod
+
+        test_command = sw_mod.default_test_command(root, "swift")
     elif language == "js":
         test_command = "npm test"
     else:

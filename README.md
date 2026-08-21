@@ -31,6 +31,8 @@ Optional extras, all auto-detected:
 - JS/TS support needs Node and, in the project: `npm install -D @babel/parser @babel/traverse @babel/generator @babel/types`.
 - Java / C# / C++ support needs that language's build tool available on `PATH`
   (Maven or Gradle, the `dotnet` SDK, and CMake or Make respectively).
+- Swift support needs the Swift toolchain on `PATH` (`swift test`, or `xcodebuild`
+  on macOS for Xcode projects).
 
 ## Commands
 
@@ -166,7 +168,43 @@ same toolchain per test file (Maven `-Dtest`, Gradle `--tests`, `dotnet test --f
 build tools without a per-file filter it runs the full suite and reports the contribution
 across it.
 
+## Swift target
+
+Mutation-gate mutates Swift (`.swift`) via the same pure-Python tokenizer engine — zero
+per-language dependencies, in-place token edits that preserve formatting byte-for-byte.
+The suite runs with the project's own toolchain, auto-detected: `swift test` for SPM
+packages (`Package.swift`), `xcodebuild test -project <proj> -scheme <proj>` for Xcode
+projects (override with `test_command`; for an iOS app pin the simulator and test bundle,
+e.g. `xcodebuild test -project App.xcodeproj -scheme App -destination 'platform=iOS
+Simulator,name=iPhone 17 Pro' -only-testing:AppTests -quiet`).
+
+Language is auto-detected (`Package.swift`, `*.xcodeproj`/`*.xcworkspace`, or any
+`.swift` source; override with `language = "swift"` in config). Test files (`Tests/`,
+`*Tests.swift`, `*Test.swift`) and `Package.swift` manifests are never mutated.
+
+```
+cd examples/demo-swift
+swift test
+mutation-gate run . --min-score 0.85      # boundary-equivalent mutants cap ~90%
+```
+
+All 10 core operators apply. Swift-specific handling: conditions are usually unparenthesized,
+so `negate_condition` locates the condition extent itself and wraps it — `if v < 0 {`
+becomes `if !(v < 0) {`, `guard s > 0 else {` becomes `guard !(s > 0) else {` (condition
+lists like `if a, b`, `let`/`var` bindings, and `#available` are skipped). Statements end at
+newlines rather than semicolons, so `remove_stmt` deletes single-line expression statements
+(calls, assignments, `return`/`throw`) while declarations, control-flow headers, attributes,
+and multi-line statement prefixes are left alone. `!` is only removed as prefix negation —
+postfix force-unwrap (`opt!`) is never touched — and raw strings (`#"..."#`),
+multiline strings, range operators (`..<`, `...`), and nested block comments tokenize cleanly.
+As with the other tokenizer targets, compile-failed mutants count as killed; generic
+parameters can surface as such "comparison" noise.
+
+Because Swift has no universal per-file test filter, `verify` runs the full suite and
+reports the contribution across it (a warning is printed).
+
 ## Distributed runner
+
 
 Mutation runs are embarrassingly parallel, so `run` can push the work to any number of
 machines. A tiny stdlib HTTP broker (`server`) hands each mutant to the first free `worker`,
@@ -209,12 +247,14 @@ below 50% fails the gate (the AI-test wedge: coverage alone can't catch it).
 
 - `src/mutation_gate/` — engine (operators, generation, runner, cache, coverage, verify, gate)
 - `src/mutation_gate/cfamily.py` — pure-Python tokenizer mutator for Java / C# / C++
+- `src/mutation_gate/swift.py` — pure-Python tokenizer mutator for Swift (SPM / Xcode)
 - `src/mutation_gate/server.py` — distributed broker (stdlib `http.server`)
 - `src/mutation_gate/distributed.py` — distributed client + worker
 - `src/mutation_gate/js/engine.mjs` — Babel-based JS/TS mutator (Node side)
 - `examples/demo/` — Python dogfood project with real tests vs theater tests
 - `examples/demo-js/` — JS/TS dogfood project (Node's built-in test runner)
 - `examples/demo-java/`, `examples/demo-csharp/`, `examples/demo-cpp/` — C-family dogfood projects
+- `examples/demo-swift/` — Swift (SPM) dogfood project
 - `examples/ci/` — GitHub Action workflow template
 - `tests/` — the tool's own test suite
 
@@ -227,5 +267,7 @@ below 50% fails the gate (the AI-test wedge: coverage alone can't catch it).
 - v0.5 ✅ distributed runner (`server` / `worker` / `run --remote`)
 - v0.6 ✅ Java / C# / C++ targets (pure-Python tokenizer engine, build-tool test runner,
   per-test-file `verify`)
-- v0.7 — hosted distributed runner (the opencode-go model), GitHub App / PR checks,
+- v0.7 ✅ Swift target (pure-Python tokenizer engine: paren-less condition negation,
+  newline statement removal, force-unwrap-safe `!`, SPM/Xcode runner)
+- v0.8 — hosted distributed runner (the opencode-go model), GitHub App / PR checks,
   coverage-guided `run` + `--test-subset` parity for the C-family targets

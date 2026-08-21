@@ -1,0 +1,12 @@
+# Mutation Gate configuration for the Swift demo package.
+#
+# NOTE: the demo tops out around ~90% because guard-style clamps produce
+# boundary-equivalent mutants (e.g. `v < lo` → `v <= lo` returns `lo` when
+# `v == lo` either way). Equivalent mutants are unrecoverable by any suite,
+# so the demo gate sits below 100% on purpose.
+language = "swift"
+test_command = "swift test"
+timeout = 300
+workers = 4
+cache = true
+coverage_guided = false

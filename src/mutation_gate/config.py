@@ -38,7 +38,7 @@ class Config:
     test_subset: bool = False
     mutate_docstrings: bool = False
     operators: list[str] | None = None
-    language: str = "auto"  # "auto" | "python" | "js" | "java" | "csharp" | "cpp"
+    language: str = "auto"  # "auto" | "python" | "js" | "java" | "csharp" | "cpp" | "swift"
     # Runtime used to spawn the JS Babel engine and run per-mutant tests.
     # "bun" opts into Bun (faster process startup); coverage collection stays on Node.
     js_runtime: str = "node"  # "node" | "bun"

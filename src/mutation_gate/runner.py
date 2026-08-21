@@ -36,6 +36,11 @@ _IGNORE_DIRS = {
     "build",
     ".tox",
     ".mutation-gate",
+    # Swift toolchain artifacts: they embed absolute paths (SPM module caches,
+    # Xcode indexes) and must be rebuilt inside each worktree.
+    ".build",
+    "DerivedData",
+    ".xcuserdata",
 }
 
 
