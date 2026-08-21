@@ -76,17 +76,31 @@ def generate_mutants(
             replacement = op_fn(node)
             if replacement is None:
                 continue
-            mutated_tree = copy.deepcopy(tree)
+            # Swap the mutant into the live tree, unparse, then swap the
+            # original back. The old approach deep-copied the whole tree per
+            # candidate, which dominated generation time on large files.
             try:
-                _replace_at(mutated_tree, node_path, replacement)
+                parent, (field, index) = _navigate(tree, node_path)
+                if index is None:
+                    original = getattr(parent, field)
+                    setattr(parent, field, replacement)
+                else:
+                    container = getattr(parent, field)
+                    original = container[index]
+                    container[index] = replacement
             except Exception:
                 continue
             try:
-                mutated_source = ast.unparse(mutated_tree)
+                mutated_source = ast.unparse(tree)
                 ast.parse(mutated_source)  # sanity
             except SyntaxError:
-                continue
-            if mutated_source == source:
+                mutated_source = ""
+            finally:
+                if index is None:
+                    setattr(parent, field, original)
+                else:
+                    container[index] = original
+            if not mutated_source or mutated_source == source:
                 continue
             key = hashlib.sha1(mutated_source.encode()).hexdigest()
             if key in mutants:
@@ -97,7 +111,7 @@ def generate_mutants(
                 file=path,
                 lineno=lineno,
                 operator=op_name,
-                before=ast.unparse(copy.deepcopy(node)),
+                before=ast.unparse(node),
                 after=ast.unparse(replacement),
                 source=mutated_source,
                 original=source,

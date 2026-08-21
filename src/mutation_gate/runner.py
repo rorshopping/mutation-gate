@@ -93,19 +93,23 @@ def resolve_test_cmd(command: str, project_python: str | None = None) -> list[st
     return _resolve_cmd(parts)
 
 
-def subset_prefix(test_cmd: list[str], project_python: str | None = None) -> list[str]:
+def subset_prefix(
+    test_cmd: list[str],
+    project_python: str | None = None,
+    js_runtime: str = "node",
+) -> list[str]:
     """Command prefix for running a reduced set of test files per mutant.
 
-    Python/pytest → `python -m pytest -q <files>`; anything else (JS/TS via
-    node or npm) → `node --test <files>`.
+    Python/pytest → `python -m pytest -q <files>`; JS/TS → the configured
+    runtime (`node --test <files>` or `bun test <files>`); anything else
+    (npm, ...) falls back to the full test command.
     """
     interp = project_python or sys.executable
     if len(test_cmd) >= 2 and test_cmd[0] in (interp, sys.executable, "python", "python3") and test_cmd[1] == "-m":
         return [test_cmd[0], "-m", "pytest", "-q"]
-    node = shutil.which("node")
-    if node:
-        return [node, "--test"]
-    return test_cmd
+    from .js import js_runner_prefix
+
+    return js_runner_prefix(js_runtime)
 
 
 def _copy_worktree(src: Path, dst: Path) -> None:
@@ -211,19 +215,21 @@ class Runner:
         timeout: int = 60,
         workers: int = 4,
         cache_file: Path | None = None,
+        js_runtime: str = "node",
     ):
         self.project_root = project_root.resolve()
         self.test_command = test_command
         self.timeout = timeout
         self.workers = max(1, workers)
         self.cache_file = cache_file
+        self.js_runtime = js_runtime or "node"
         self.project_python = detect_project_python(self.project_root)
 
     def _test_cmd(self) -> list[str]:
         return resolve_test_cmd(self.test_command, self.project_python)
 
     def _subset_prefix(self, test_cmd: list[str]) -> list[str]:
-        return subset_prefix(test_cmd, self.project_python)
+        return subset_prefix(test_cmd, self.project_python, self.js_runtime)
 
     def baseline(self) -> tuple[bool, str]:
         """Run suite unmuted; True if baseline passes (exit 0)."""

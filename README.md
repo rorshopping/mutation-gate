@@ -116,6 +116,20 @@ reporter) instead of `coverage.py` — e.g. `mutation-gate run . --test-subset` 
 covering test files per mutant, and `verify` filters to the lines the evaluated test actually
 executes.
 
+### Faster runs with Bun
+
+Set `js_runtime = "bun"` in `.mutation-gate.toml` to run the Babel engine and per-mutant
+tests with [Bun](https://bun.com) instead of Node (Bun 1.4 starts ~2.5x faster on Windows,
+~2x on Linux — meaningful when a project has hundreds of mutants). Requirements and limits:
+
+- Your suite must run under `bun test` (Jest-compatible API or `node:test`). Mocha/chai or
+  heavily customized jest setups are not supported.
+- Per-mutant test commands become `bun test <file>`; coverage collection (`--coverage-guided`,
+  `--test-subset`, `verify`) still uses Node's LCOV reporter, so Node must remain installed.
+- Falls back to Node automatically with a warning if `bun` is not on PATH.
+- Projects with native addons built for a newer Node may need a rebuild (`NODE_MODULE_VERSION`
+  changed in Bun 1.4).
+
 ## Java / C# / C++ targets
 
 Mutation-gate mutates Java (`.java`), C# (`.cs`), and C/C++ (`.cpp/.cc/.cxx/.c/.h/...`)

@@ -189,3 +189,88 @@ def test_verify_js_real_beats_theater():
     assert real.contribution > theater.contribution + 0.2
     assert theater.survivors
     assert len(real.survivors) < len(theater.survivors)
+
+
+# ---------------------------------------------------------------------------
+# js_runtime ("bun" | "node") support
+# ---------------------------------------------------------------------------
+
+
+def _which_fake(bun=None, node=None):
+    def fake(name, *a, **kw):
+        if name == "bun":
+            return bun
+        if name == "node":
+            return node
+        return None
+
+    return fake
+
+
+def test_js_runner_prefix_defaults_to_node(monkeypatch):
+    monkeypatch.setattr(js_mod.shutil, "which", _which_fake(node="/usr/bin/node"))
+    assert js_mod.js_runner_prefix("node") == ["/usr/bin/node", "--test"]
+
+
+def test_js_runner_prefix_bun(monkeypatch):
+    monkeypatch.setattr(js_mod.shutil, "which", _which_fake(bun="/usr/bin/bun"))
+    assert js_mod.js_runner_prefix("bun") == ["/usr/bin/bun", "test"]
+
+
+def test_js_runtime_binary_bun_missing_falls_back(monkeypatch, capsys):
+    monkeypatch.setattr(js_mod.shutil, "which", _which_fake(node="/usr/bin/node"))
+    assert js_mod.js_runtime_binary("bun") == "/usr/bin/node"
+    err = capsys.readouterr().err
+    assert "falling back to node" in err
+
+
+def test_generate_js_mutants_uses_given_binary(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+
+        class P:
+            returncode = 0
+            stdout = "[]"
+            stderr = ""
+
+        return P()
+
+    monkeypatch.setattr(js_mod.subprocess, "run", fake_run)
+    rel = Path("src/core.js")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "core.js").write_text("let x = 1;\n", encoding="utf-8")
+    js_mod.generate_js_mutants(tmp_path, rel, binary="/opt/bin/bun")
+    assert captured["cmd"][0] == "/opt/bin/bun"
+    assert captured["cmd"][-1].endswith("core.js")
+
+
+def test_subset_prefix_bun_vs_node(monkeypatch):
+    from mutation_gate.runner import subset_prefix
+
+    monkeypatch.setattr(js_mod.shutil, "which", _which_fake(bun="/usr/bin/bun"))
+    assert subset_prefix(["npm", "test"], js_runtime="bun") == ["/usr/bin/bun", "test"]
+    monkeypatch.setattr(js_mod.shutil, "which", _which_fake(node="/usr/bin/node"))
+    assert subset_prefix(["npm", "test"], js_runtime="node") == ["/usr/bin/node", "--test"]
+
+
+def test_subset_prefix_pytest_unaffected_by_js_runtime():
+    import sys
+
+    from mutation_gate.runner import subset_prefix
+
+    # resolve_test_cmd rewrites `pytest ...` to `[python, -m, pytest, ...]`
+    cmd = subset_prefix([sys.executable, "-m", "pytest", "-q"], js_runtime="bun")
+    assert cmd == [sys.executable, "-m", "pytest", "-q"]
+
+
+def test_config_loads_js_runtime(tmp_path):
+    (tmp_path / ".mutation-gate.toml").write_text('js_runtime = "bun"\n', encoding="utf-8")
+    cfg = load_config(tmp_path)
+    assert cfg.js_runtime == "bun"
+
+
+def test_config_default_js_runtime_is_node():
+    cfg = Config()
+    assert cfg.js_runtime == "node"

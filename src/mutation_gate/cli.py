@@ -171,21 +171,32 @@ def _load_mutants_js(root: Path, cfg, args) -> list:
                 print("⚠️  Coverage run returned no data — running without line filtering.", file=sys.stderr)
 
     mutants = []
+    engine_bin = js_mod.js_runtime_binary(getattr(cfg, "js_runtime", "node"))
+    rels = [f.relative_to(root) for f in files]
+    try:
+        batch = js_mod.generate_js_mutants_batch(root, rels, binary=engine_bin, operators=ops)
+    except RuntimeError as exc:
+        print(f"⚠️  {exc}", file=sys.stderr)
+        batch = None
     for f in files:
         rel = f.relative_to(root)
-        try:
-            for m in js_mod.generate_js_mutants(root, rel, operators=ops):
-                if changed_lines is not None:
-                    lines = changed_lines.get(rel, set())
-                    if m.lineno not in lines:
-                        continue
-                if covered is not None:
-                    lines = covered.get(m.file, set())
-                    if m.lineno not in lines:
-                        continue
-                mutants.append(m)
-        except RuntimeError as exc:
-            print(f"⚠️  {exc}", file=sys.stderr)
+        file_mutants = batch.get(rel) if batch is not None else None
+        if file_mutants is None:
+            try:
+                file_mutants = js_mod.generate_js_mutants(root, rel, operators=ops, binary=engine_bin)
+            except RuntimeError as exc:
+                print(f"⚠️  {exc}", file=sys.stderr)
+                continue
+        for m in file_mutants:
+            if changed_lines is not None:
+                lines = changed_lines.get(rel, set())
+                if m.lineno not in lines:
+                    continue
+            if covered is not None:
+                lines = covered.get(m.file, set())
+                if m.lineno not in lines:
+                    continue
+            mutants.append(m)
     return mutants
 
 
@@ -332,7 +343,9 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     language = _detect_language(root, cfg)
     if language == "js" and cfg.test_command == "pytest":
-        cfg.test_command = "npm test"
+        # Our own fallback default (never a user-authored command): pick the
+        # runner matching js_runtime so "bun" actually speeds up per-mutant runs.
+        cfg.test_command = "bun test" if getattr(cfg, "js_runtime", "node") == "bun" else "npm test"
     from . import cfamily as cf
 
     if language in cf.LANGUAGES and cfg.test_command in ("pytest", "pytest -q"):
@@ -377,7 +390,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"⚠️  --test-subset is not supported for {language} — running the full suite per mutant.", file=sys.stderr)
 
     cache_file = root / cfg.cache_file if cfg.cache else None
-    runner = Runner(root, test_command=cfg.test_command, timeout=cfg.timeout, workers=cfg.workers, cache_file=cache_file)
+    runner = Runner(
+        root,
+        test_command=cfg.test_command,
+        timeout=cfg.timeout,
+        workers=cfg.workers,
+        cache_file=cache_file,
+        js_runtime=getattr(cfg, "js_runtime", "node"),
+    )
     baseline_ok, baseline_out = runner.baseline()
 
     if not baseline_ok and not args.ignore_baseline:
@@ -560,6 +580,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         test_command = "pytest -q"
     import json
 
+    js_runtime_line = '\njs_runtime = "node"  # switch to "bun" for faster per-mutant test runs\n' if language == "js" else ""
     cfg_file.write_text(
         "# Mutation Gate configuration\n"
         f'test_command = "{test_command}"\n'
@@ -569,6 +590,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         "coverage_guided = false\n"
         "mutate_docstrings = false\n"
         f'language = "{language}"\n'
+        f"{js_runtime_line}"
         f"include_globs = {json.dumps(include_globs)}\n"
         f"exclude_globs = {json.dumps(exclude_globs)}\n",
         encoding="utf-8",

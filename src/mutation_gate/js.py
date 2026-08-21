@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from .config import Config
@@ -30,6 +32,35 @@ _JS_NOISE = {
 
 def node_available() -> bool:
     return shutil.which("node") is not None
+
+
+def bun_available() -> bool:
+    return shutil.which("bun") is not None
+
+
+def js_runtime_binary(js_runtime: str = "node") -> str:
+    """Resolve the binary that spawns the Babel engine (and runs JS tests).
+
+    Honors cfg.js_runtime ("node"|"bun"); falls back to node with a warning
+    when "bun" is requested but bun is not on PATH.
+    """
+    if (js_runtime or "node").lower() == "bun":
+        bun = shutil.which("bun")
+        if bun:
+            return bun
+        print('⚠️  js_runtime = "bun" but bun is not on PATH — falling back to node.', file=sys.stderr)
+    return shutil.which("node") or "node"
+
+
+def js_runner_prefix(js_runtime: str = "node") -> list[str]:
+    """Command prefix that runs specific JS test files under the runtime.
+
+    node → `[node, --test]`; bun → `[bun, test]` (bun has no --test flag).
+    Used by verify_js_project and --test-subset. Coverage collection always
+    uses Node's LCOV reporter regardless of this setting.
+    """
+    binary = js_runtime_binary(js_runtime)
+    return [binary, "test"] if Path(binary).name.lower().startswith("bun") else [binary, "--test"]
 
 
 def babel_installed(project_root: Path) -> bool:
@@ -210,12 +241,20 @@ def generate_js_mutants(
     project_root: Path,
     file_rel: Path,
     operators: list[str] | None = None,
+    binary: str | None = None,
 ) -> list[Mutant]:
-    """Run the Babel engine over one file and return Mutant objects."""
-    node = shutil.which("node")
+    """Run the Babel engine over one file and return Mutant objects.
+
+    `binary` overrides the runtime executable (see js_runtime_binary); callers
+    processing many files resolve it once and pass it through.
+    """
+    # Lazy import: runner.py imports js.js_runner_prefix inside subset_prefix.
+    from .runner import _resolve_cmd
+
+    node = binary or shutil.which("node")
     file_abs = (project_root / file_rel).resolve()
     proc = subprocess.run(
-        [node, str(ENGINE), str(project_root), str(file_abs)],
+        _resolve_cmd([node, str(ENGINE), str(project_root), str(file_abs)]),
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -251,6 +290,63 @@ def generate_js_mutants(
     return mutants
 
 
+def generate_js_mutants_batch(
+    project_root: Path,
+    files_rel: list[Path],
+    binary: str | None = None,
+    operators: list[str] | None = None,
+) -> dict[Path, list[Mutant]]:
+    """Generate mutants for many files in one engine process (NDJSON mode).
+
+    Amortizes runtime startup + Babel require across all files. Returns
+    file → mutants using the relative paths exactly as passed (posix form).
+    Raises RuntimeError on engine failure, mirroring generate_js_mutants.
+    """
+    binary = binary or shutil.which("node")
+    rels = [f.as_posix() for f in files_rel]
+    proc = subprocess.run(
+        [binary, str(ENGINE), str(project_root), "--batch", *rels],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180 * max(1, len(rels)),
+        cwd=str(project_root),
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"JS engine batch failed: {proc.stderr[:500]}")
+
+    out: dict[Path, list[Mutant]] = {}
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        entry = json.loads(line)
+        file_rel = Path(entry["file"])
+        if "error" in entry:
+            raise RuntimeError(f"JS engine failed for {file_rel}: {entry['error']}")
+        original = (project_root / file_rel).read_text(encoding="utf-8")
+        mutants: list[Mutant] = []
+        for m in entry["mutants"]:
+            op = m["operator"]
+            if operators and op not in operators:
+                continue
+            mutants.append(
+                Mutant(
+                    id=len(mutants),
+                    file=file_rel,
+                    lineno=m["line"],
+                    operator=op,
+                    before=m["before"],
+                    after=m["after"],
+                    source=m["source"],
+                    original=original,
+                )
+            )
+        out[file_rel] = mutants
+    return out
+
+
 def verify_js_project(
     root: Path,
     test_file: Path,
@@ -267,22 +363,34 @@ def verify_js_project(
     covered = js_covered_lines_for_test(root, test_file, timeout=max(cfg.timeout, 300))
     cov_available = bool(covered)
 
-    mutants: list[Mutant] = []
-    ops = cfg.operators
+    engine_bin = js_runtime_binary(cfg.js_runtime)
+    rels: list[Path] = []
     for f in collect_js_files(root):
         rel = f.relative_to(root)
         if cov_available and rel not in covered:
             continue
-        try:
-            for m in generate_js_mutants(root, rel, operators=ops):
-                if cov_available and m.lineno not in covered.get(m.file, set()):
-                    continue
-                mutants.append(m)
-        except RuntimeError:
-            continue
+        rels.append(rel)
+    try:
+        batch = generate_js_mutants_batch(root, rels, binary=engine_bin, operators=cfg.operators)
+    except RuntimeError:
+        batch = None
+
+    mutants: list[Mutant] = []
+    ops = cfg.operators
+    for rel in rels:
+        items = batch.get(rel) if batch is not None else None
+        if items is None:
+            try:
+                items = generate_js_mutants(root, rel, operators=ops, binary=engine_bin)
+            except RuntimeError:
+                continue
+        for m in items:
+            if cov_available and m.lineno not in covered.get(m.file, set()):
+                continue
+            mutants.append(m)
 
     cache_file = root / cfg.cache_file if cfg.cache else None
-    cfg.test_command = f"node --test {test_rel}"
+    cfg.test_command = shlex.join([*js_runner_prefix(cfg.js_runtime), test_rel])
     runner = Runner(
         root,
         test_command=cfg.test_command,

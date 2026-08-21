@@ -39,6 +39,9 @@ class Config:
     mutate_docstrings: bool = False
     operators: list[str] | None = None
     language: str = "auto"  # "auto" | "python" | "js" | "java" | "csharp" | "cpp"
+    # Runtime used to spawn the JS Babel engine and run per-mutant tests.
+    # "bun" opts into Bun (faster process startup); coverage collection stays on Node.
+    js_runtime: str = "node"  # "node" | "bun"
 
     def resolve(self, root: Path) -> "Config":
         self.project_root = root.resolve()
